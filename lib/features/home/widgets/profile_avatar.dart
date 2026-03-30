@@ -52,6 +52,7 @@ class ProfileAvatar extends StatelessWidget {
                 ),
                 child: _AvatarContent(
                   imagePath: controller.imagePath,
+                  avatarUrl: controller.avatarUrl,
                   initials: controller.initials,
                   avatarSize: size - (effectivePadding * 2),
                 ),
@@ -99,11 +100,13 @@ class ProfileAvatar extends StatelessWidget {
 class _AvatarContent extends StatelessWidget {
   const _AvatarContent({
     required this.imagePath,
+    required this.avatarUrl,
     required this.initials,
     required this.avatarSize,
   });
 
   final String? imagePath;
+  final String avatarUrl;
   final String initials;
   final double avatarSize;
 
@@ -111,6 +114,7 @@ class _AvatarContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final imageFile = imagePath == null ? null : File(imagePath!);
     final hasImage = imageFile != null && imageFile.existsSync();
+    final hasAvatarUrl = avatarUrl.trim().isNotEmpty;
 
     return ClipOval(
       child: hasImage
@@ -120,32 +124,61 @@ class _AvatarContent extends StatelessWidget {
               width: avatarSize,
               height: avatarSize,
             )
-          : Container(
+          : hasAvatarUrl
+          ? Image.network(
+              avatarUrl,
+              fit: BoxFit.cover,
               width: avatarSize,
               height: avatarSize,
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFFFFD0D9), Color(0xFF536DFF)],
-                ),
+              errorBuilder: (context, error, stackTrace) => _AvatarFallback(
+                initials: initials,
+                avatarSize: avatarSize,
               ),
-              alignment: Alignment.center,
-              child: avatarSize < 30
-                  ? const Icon(
-                      Icons.person_rounded,
-                      color: Colors.white,
-                      size: 16,
-                    )
-                  : Text(
-                      initials,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: avatarSize * 0.28,
-                        letterSpacing: 0.4,
-                      ),
-                    ),
+            )
+          : _AvatarFallback(
+              initials: initials,
+              avatarSize: avatarSize,
+            ),
+    );
+  }
+}
+
+class _AvatarFallback extends StatelessWidget {
+  const _AvatarFallback({
+    required this.initials,
+    required this.avatarSize,
+  });
+
+  final String initials;
+  final double avatarSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: avatarSize,
+      height: avatarSize,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFD0D9), Color(0xFF536DFF)],
+        ),
+      ),
+      alignment: Alignment.center,
+      child: avatarSize < 30
+          ? const Icon(
+              Icons.person_rounded,
+              color: Colors.white,
+              size: 16,
+            )
+          : Text(
+              initials,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: avatarSize * 0.28,
+                letterSpacing: 0.4,
+              ),
             ),
     );
   }

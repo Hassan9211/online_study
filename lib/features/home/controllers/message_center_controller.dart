@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:get/get.dart';
 
@@ -12,10 +11,8 @@ class MessageCenterController extends GetxController {
   MessageCenterController(this._repository);
 
   final MessageCenterRepository _repository;
-  final Random _random = Random();
 
   Timer? _clockTimer;
-  Timer? _liveNotificationTimer;
 
   bool _isAiGuestTyping = false;
   int _notificationIdSeed = 1;
@@ -41,16 +38,11 @@ class MessageCenterController extends GetxController {
     super.onInit();
     _loadState();
     _clockTimer = Timer.periodic(const Duration(seconds: 15), (_) => update());
-    _liveNotificationTimer = Timer.periodic(
-      const Duration(seconds: 40),
-      (_) => _generateLiveNotification(),
-    );
   }
 
   @override
   void onClose() {
     _clockTimer?.cancel();
-    _liveNotificationTimer?.cancel();
     super.onClose();
   }
 
@@ -63,6 +55,7 @@ class MessageCenterController extends GetxController {
         .map((notification) => notification.copyWith(isRead: true))
         .toList();
     await _persistState();
+    await _repository.markNotificationsRead();
     update();
   }
 
@@ -145,31 +138,34 @@ class MessageCenterController extends GetxController {
     _isAiGuestTyping = true;
     update();
 
-    await Future<void>.delayed(
-      Duration(milliseconds: 700 + _random.nextInt(500)),
-    );
+    await Future<void>.delayed(const Duration(milliseconds: 900));
 
-    final reply = await _repository.getAiGuestReply(normalizedText);
-    _aiGuestMessages.add(
-      SupportChatMessage(
-        id: 'message_${_messageIdSeed++}',
-        text: reply,
-        senderType: MessageSenderType.assistant,
-        timestamp: DateTime.now(),
-      ),
-    );
-    final replyTimestamp = DateTime.now();
-    _updateConversationPreview(
-      preview: reply,
-      timestamp: replyTimestamp,
-    );
-    _isAiGuestTyping = false;
-    await addNotification(
-      title: 'New message from AI Guest',
-      message: reply,
-      type: NotificationType.message,
-    );
-    update();
+    try {
+      final reply = await _repository.getAiGuestReply(normalizedText);
+      _aiGuestMessages.add(
+        SupportChatMessage(
+          id: 'message_${_messageIdSeed++}',
+          text: reply,
+          senderType: MessageSenderType.assistant,
+          timestamp: DateTime.now(),
+        ),
+      );
+      final replyTimestamp = DateTime.now();
+      _updateConversationPreview(
+        preview: reply,
+        timestamp: replyTimestamp,
+      );
+      _isAiGuestTyping = false;
+      await addNotification(
+        title: 'New message from AI Guest',
+        message: reply,
+        type: NotificationType.message,
+      );
+      update();
+    } catch (_) {
+      _isAiGuestTyping = false;
+      update();
+    }
   }
 
   String conversationTimeLabel(DateTime timestamp) {
@@ -224,39 +220,6 @@ class MessageCenterController extends GetxController {
     );
   }
 
-  Future<void> _generateLiveNotification() async {
-    final templates = [
-      (
-        title: 'Study reminder',
-        message:
-            'Continue your Product Design lesson and keep your streak alive.',
-        type: NotificationType.reminder,
-      ),
-      (
-        title: 'Course updated',
-        message: 'A new tip was added to your current learning plan.',
-        type: NotificationType.update,
-      ),
-      (
-        title: 'Achievement unlocked',
-        message: 'You are making steady progress this week.',
-        type: NotificationType.celebration,
-      ),
-      (
-        title: 'New support message',
-        message: 'AI Guest is available if you need help with any lesson.',
-        type: NotificationType.message,
-      ),
-    ];
-
-    final template = templates[_random.nextInt(templates.length)];
-    await addNotification(
-      title: template.title,
-      message: template.message,
-      type: template.type,
-    );
-  }
-
   void _updateConversationPreview({
     required String preview,
     required DateTime timestamp,
@@ -301,5 +264,9 @@ class MessageCenterController extends GetxController {
         nextMessageId: _messageIdSeed,
       ),
     );
+  }
+
+  Future<void> refreshState() async {
+    await _loadState();
   }
 }

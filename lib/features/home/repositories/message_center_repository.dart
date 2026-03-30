@@ -4,4 +4,5 @@ abstract interface class MessageCenterRepository {
   Future<MessageCenterState> loadState();
   Future<void> saveState(MessageCenterState state);
   Future<String> getAiGuestReply(String prompt);
+  Future<void> markNotificationsRead({List<String>? ids});
 }

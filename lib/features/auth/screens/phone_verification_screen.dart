@@ -25,6 +25,8 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
 
   int _stepIndex = 0;
   int _otpIndex = 0;
+  bool _isSendingOtp = false;
+  bool _isVerifyingOtp = false;
 
   bool get _canContinueToOtp => _phoneController.text.trim().isNotEmpty;
 
@@ -53,26 +55,85 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
     Get.back();
   }
 
-  void _goToOtp() {
+  Future<void> _goToOtp() async {
     if (!_canContinueToOtp) {
       return;
     }
+
     setState(() {
-      _stepIndex = 1;
+      _isSendingOtp = true;
     });
+
+    final didSendOtp = await _authSessionController.sendOtp(
+      phone: _phoneController.text,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isSendingOtp = false;
+      if (didSendOtp) {
+        _stepIndex = 1;
+      }
+    });
+
+    if (!didSendOtp) {
+      Get.snackbar(
+        'OTP Send Failed',
+        _authSessionController.lastErrorMessage.isEmpty
+            ? 'Phone verification code send nahi ho saka.'
+            : _authSessionController.lastErrorMessage,
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.white,
+        colorText: AppColors.heading,
+        margin: const EdgeInsets.all(14),
+      );
+    }
   }
 
-  void _goToSuccess() {
+  Future<void> _goToSuccess() async {
     if (!_canVerifyOtp) {
       return;
     }
+
     setState(() {
-      _stepIndex = 2;
+      _isVerifyingOtp = true;
     });
+
+    final didCompleteRegistration =
+        await _authSessionController.completeRegistration(
+          phone: _phoneController.text,
+          code: _otpControllers.map((controller) => controller.text).join(),
+        );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isVerifyingOtp = false;
+      if (didCompleteRegistration) {
+        _stepIndex = 2;
+      }
+    });
+
+    if (!didCompleteRegistration) {
+      Get.snackbar(
+        'Verification Failed',
+        _authSessionController.lastErrorMessage.isEmpty
+            ? 'OTP verify nahi ho saka.'
+            : _authSessionController.lastErrorMessage,
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.white,
+        colorText: AppColors.heading,
+        margin: const EdgeInsets.all(14),
+      );
+    }
   }
 
   Future<void> _finishSignUp() async {
-    await _authSessionController.completeRegistration();
     Get.offAllNamed(AppRoutes.home);
   }
 
@@ -135,7 +196,8 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
                     key: const ValueKey('phone-step'),
                     onBack: _goBack,
                     controller: _phoneController,
-                    onContinue: _canContinueToOtp ? _goToOtp : null,
+                    onContinue:
+                        _canContinueToOtp && !_isSendingOtp ? _goToOtp : null,
                     onPhoneChanged: (_) => setState(() {}),
                     onKeyTap: _appendPhoneDigit,
                     onBackspace: _removePhoneDigit,
@@ -145,7 +207,8 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
                     key: const ValueKey('otp-step'),
                     onBack: _goBack,
                     otpControllers: _otpControllers,
-                    onVerify: _canVerifyOtp ? _goToSuccess : null,
+                    onVerify:
+                        _canVerifyOtp && !_isVerifyingOtp ? _goToSuccess : null,
                     onKeyTap: _appendOtpDigit,
                     onBackspace: _removeOtpDigit,
                   )

@@ -47,7 +47,9 @@ class _LogInScreenState extends State<LogInScreen> {
     if (!didLogIn) {
       Get.snackbar(
         'Log In Failed',
-        'Email ya password match nahi kar raha.',
+        _authSessionController.lastErrorMessage.isEmpty
+            ? 'Email ya password match nahi kar raha.'
+            : _authSessionController.lastErrorMessage,
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.white,
         colorText: AppColors.heading,
@@ -151,7 +153,10 @@ class _LogInScreenState extends State<LogInScreen> {
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton(
-                        onPressed: () {},
+                        onPressed: () => Get.toNamed(
+                          AppRoutes.forgotPassword,
+                          arguments: {'email': _emailController.text.trim()},
+                        ),
                         style: TextButton.styleFrom(
                           foregroundColor: AppColors.mutedText,
                           padding: EdgeInsets.zero,
@@ -166,7 +171,10 @@ class _LogInScreenState extends State<LogInScreen> {
                       width: double.infinity,
                       child: AppPrimaryButton(
                         label: 'Log In',
-                        onPressed: _canLogIn ? _handleLogIn : null,
+                        onPressed:
+                            _canLogIn && !_authSessionController.isBusy
+                            ? _handleLogIn
+                            : null,
                       ),
                     ),
                     const SizedBox(height: 18),

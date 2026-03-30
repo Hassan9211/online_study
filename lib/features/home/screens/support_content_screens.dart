@@ -94,33 +94,44 @@ class _SupportRequestScreenState extends State<SupportRequestScreen> {
       return;
     }
 
-    final request = await _supportRepository.submitRequest(
-      topic: _selectedTopic,
-      subject: _subjectController.text.trim(),
-      message: _messageController.text.trim(),
-      email: _profileController.email,
-    );
+    try {
+      final request = await _supportRepository.submitRequest(
+        topic: _selectedTopic,
+        subject: _subjectController.text.trim(),
+        message: _messageController.text.trim(),
+        email: _profileController.email,
+      );
 
-    await _messageCenterController.addNotification(
-      title: 'Support request sent',
-      message:
-          'Ticket ${request.id} for $_selectedTopic has been submitted successfully.',
-      type: NotificationType.message,
-    );
+      await _messageCenterController.addNotification(
+        title: 'Support request sent',
+        message:
+            'Ticket ${request.id} for $_selectedTopic has been submitted successfully.',
+        type: NotificationType.message,
+      );
 
-    if (!mounted) {
-      return;
+      if (!mounted) {
+        return;
+      }
+
+      Get.back();
+      Get.snackbar(
+        'Support Request Sent',
+        'Hamari team aap se jald contact karegi.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.white,
+        colorText: AppColors.heading,
+        margin: const EdgeInsets.all(14),
+      );
+    } catch (error) {
+      Get.snackbar(
+        'Support Request Failed',
+        error.toString(),
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.white,
+        colorText: AppColors.heading,
+        margin: const EdgeInsets.all(14),
+      );
     }
-
-    Get.back();
-    Get.snackbar(
-      'Support Request Sent',
-      'Hamari team aap se jald contact karegi.',
-      snackPosition: SnackPosition.BOTTOM,
-      backgroundColor: Colors.white,
-      colorText: AppColors.heading,
-      margin: const EdgeInsets.all(14),
-    );
   }
 
   @override

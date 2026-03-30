@@ -1,5 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/payment_method_record.dart';
 import '../models/product_design_purchase_record.dart';
 import 'product_design_purchase_repository.dart';
 
@@ -38,5 +39,45 @@ class LocalProductDesignPurchaseRepository
         record.purchasedAt!.toIso8601String(),
       );
     }
+  }
+
+  @override
+  Future<List<PaymentMethodRecord>> loadPaymentMethods() async {
+    return const <PaymentMethodRecord>[
+      PaymentMethodRecord(
+        id: 'local_card_1',
+        label: 'My card',
+        maskedNumber: '**** **** **** 4829',
+      ),
+      PaymentMethodRecord(
+        id: 'local_card_2',
+        label: 'Work card',
+        maskedNumber: '**** **** **** 2641',
+      ),
+      PaymentMethodRecord(
+        id: 'local_card_3',
+        label: 'Family card',
+        maskedNumber: '**** **** **** 3156',
+      ),
+    ];
+  }
+
+  @override
+  Future<String> createCheckout({required String paymentMethodId}) async {
+    return 'local_payment_${DateTime.now().millisecondsSinceEpoch}';
+  }
+
+  @override
+  Future<ProductDesignPurchaseRecord> verifyPin({
+    required String paymentId,
+    required String pin,
+  }) async {
+    final record = ProductDesignPurchaseRecord(
+      isPurchased: true,
+      purchaseId: paymentId,
+      purchasedAt: DateTime.now(),
+    );
+    await savePurchase(record);
+    return record;
   }
 }

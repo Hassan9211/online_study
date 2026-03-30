@@ -17,15 +17,19 @@ class ProfileController extends GetxController {
 
   ProfileRecord _profile = const ProfileRecord.defaults();
   bool _isLoaded = false;
+  String _lastErrorMessage = '';
 
   String get name => _profile.name;
   String get email => _profile.email;
   String get phone => _profile.phone;
   String get bio => _profile.bio;
   String? get imagePath => _profile.avatarLocalPath;
+  String get avatarUrl => _profile.avatarUrl;
   bool get hasProfileImage =>
-      imagePath != null && File(imagePath!).existsSync();
+      (imagePath != null && File(imagePath!).existsSync()) ||
+      avatarUrl.trim().isNotEmpty;
   bool get isLoaded => _isLoaded;
+  String get lastErrorMessage => _lastErrorMessage;
 
   String get firstName {
     final parts = _splitName(_profile.name);
@@ -47,28 +51,35 @@ class ProfileController extends GetxController {
     _loadProfile();
   }
 
-  Future<void> updateProfile({
+  Future<bool> updateProfile({
     required String name,
     required String email,
     required String phone,
     required String bio,
   }) async {
-    _profile = _profile.copyWith(
+    final nextProfile = _profile.copyWith(
       name: _normalizedValue(name, ProfileRecord.defaultName),
       email: _normalizedValue(email, ProfileRecord.defaultEmail),
       phone: _normalizedValue(phone, ProfileRecord.defaultPhone),
       bio: _normalizedValue(bio, ProfileRecord.defaultBio),
     );
 
-    await _persistProfile();
-    update();
+    try {
+      _lastErrorMessage = '';
+      _profile = await _repository.saveProfile(nextProfile);
+      update();
+      return true;
+    } catch (error) {
+      _lastErrorMessage = error.toString();
+      update();
+      return false;
+    }
   }
 
   Future<void> updateEmail(String email) async {
     _profile = _profile.copyWith(
       email: _normalizedValue(email, ProfileRecord.defaultEmail),
     );
-    await _persistProfile();
     update();
   }
 
@@ -100,25 +111,28 @@ class ProfileController extends GetxController {
       }
 
       await sourceFile.copy(destinationPath);
-      _profile = _profile.copyWith(avatarLocalPath: destinationPath);
-
-      await _persistProfile();
+      _lastErrorMessage = '';
+      _profile = await _repository.uploadAvatar(
+        profile: _profile.copyWith(avatarLocalPath: destinationPath),
+        imagePath: destinationPath,
+      );
       update();
       return true;
     } catch (error) {
+      _lastErrorMessage = error.toString();
       debugPrint('Failed to pick profile image: $error');
       return false;
     }
+  }
+
+  Future<void> refreshProfile() async {
+    await _loadProfile();
   }
 
   Future<void> _loadProfile() async {
     _profile = await _repository.loadProfile();
     _isLoaded = true;
     update();
-  }
-
-  Future<void> _persistProfile() async {
-    await _repository.saveProfile(_profile);
   }
 
   String _normalizedValue(String value, String fallback) {

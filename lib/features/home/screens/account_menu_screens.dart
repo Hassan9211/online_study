@@ -11,6 +11,7 @@ import '../../auth/controllers/auth_session_controller.dart';
 import '../controllers/message_center_controller.dart';
 import '../controllers/profile_controller.dart';
 import '../controllers/product_design_course_controller.dart';
+import '../controllers/settings_controller.dart';
 import '../models/product_design_course_data.dart';
 import '../widgets/profile_avatar.dart';
 import 'message_screen.dart';
@@ -108,7 +109,23 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
 
   Future<void> _pickProfileImageFromSource(ImageSource source) async {
     final didPickImage = await _profileController.pickProfileImage(source);
-    if (!didPickImage || !mounted) {
+    if (!didPickImage) {
+      if (mounted) {
+        Get.snackbar(
+          'Photo Update Failed',
+          _profileController.lastErrorMessage.isEmpty
+              ? 'Profile photo update nahi ho saki.'
+              : _profileController.lastErrorMessage,
+          snackPosition: SnackPosition.BOTTOM,
+          backgroundColor: Colors.white,
+          colorText: AppColors.heading,
+          margin: const EdgeInsets.all(14),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) {
       return;
     }
 
@@ -124,7 +141,7 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
   }
 
   void _openProfilePhotoActions() {
-    final hasProfileImage = _profileController.hasProfileImage;
+    final hasProfileImage = _profileController.imagePath != null;
 
     Get.bottomSheet<void>(
       Container(
@@ -211,12 +228,27 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
       return;
     }
 
-    await _profileController.updateProfile(
+    final didSaveProfile = await _profileController.updateProfile(
       name: _nameController.text,
       email: _emailController.text,
       phone: _phoneController.text,
       bio: _bioController.text,
     );
+
+    if (!didSaveProfile) {
+      Get.snackbar(
+        'Profile Update Failed',
+        _profileController.lastErrorMessage.isEmpty
+            ? 'Profile save nahi ho saka.'
+            : _profileController.lastErrorMessage,
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.white,
+        colorText: AppColors.heading,
+        margin: const EdgeInsets.all(14),
+      );
+      return;
+    }
+
     await _authSessionController.updateEmail(_emailController.text);
 
     Get.snackbar(
@@ -302,11 +334,7 @@ class SettingsPrivacyScreen extends StatefulWidget {
 class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
   final AuthSessionController _authSessionController =
       Get.find<AuthSessionController>();
-
-  bool _pushNotifications = true;
-  bool _courseReminders = true;
-  bool _wifiDownloadsOnly = true;
-  bool _privateProfile = false;
+  final SettingsController _settingsController = Get.find<SettingsController>();
 
   Future<void> _openLogoutDialog() async {
     final shouldLogout = await Get.dialog<bool>(
@@ -339,79 +367,91 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return _AccountDetailScaffold(
-      title: 'Settings and Privacy',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Notifications',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: AppColors.heading,
-              fontWeight: FontWeight.w800,
-            ),
+    return GetBuilder<SettingsController>(
+      builder: (controller) {
+        return _AccountDetailScaffold(
+          title: 'Settings and Privacy',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Notifications',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: AppColors.heading,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              _SettingsSwitchTile(
+                label: 'Push Notifications',
+                value: controller.pushNotifications,
+                onChanged: (value) => _settingsController.updateSettings(
+                  pushNotifications: value,
+                ),
+              ),
+              _SettingsSwitchTile(
+                label: 'Course Reminders',
+                value: controller.courseReminders,
+                onChanged: (value) => _settingsController.updateSettings(
+                  courseReminders: value,
+                ),
+              ),
+              _SettingsSwitchTile(
+                label: 'Download on Wi-Fi only',
+                value: controller.wifiDownloadsOnly,
+                onChanged: (value) => _settingsController.updateSettings(
+                  wifiDownloadsOnly: value,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'Privacy',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: AppColors.heading,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              _SettingsSwitchTile(
+                label: 'Private Profile',
+                value: controller.privateProfile,
+                onChanged: (value) => _settingsController.updateSettings(
+                  privateProfile: value,
+                ),
+              ),
+              const SizedBox(height: 4),
+              _SettingsActionTile(
+                label: 'Change Password',
+                onTap: () => Get.toNamed(AppRoutes.changePassword),
+              ),
+              _SettingsActionTile(
+                label: 'Privacy Policy',
+                onTap: () => Get.toNamed(AppRoutes.privacyPolicy),
+              ),
+              _SettingsActionTile(
+                label: 'Terms and Conditions',
+                onTap: () => Get.toNamed(AppRoutes.termsConditions),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Account',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: AppColors.heading,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              _SettingsActionTile(
+                label: 'Log Out',
+                onTap: _openLogoutDialog,
+                textColor: const Color(0xFFE15A5A),
+                iconColor: const Color(0xFFE15A5A),
+                trailingIcon: Icons.logout_rounded,
+              ),
+            ],
           ),
-          const SizedBox(height: 10),
-          _SettingsSwitchTile(
-            label: 'Push Notifications',
-            value: _pushNotifications,
-            onChanged: (value) => setState(() => _pushNotifications = value),
-          ),
-          _SettingsSwitchTile(
-            label: 'Course Reminders',
-            value: _courseReminders,
-            onChanged: (value) => setState(() => _courseReminders = value),
-          ),
-          _SettingsSwitchTile(
-            label: 'Download on Wi-Fi only',
-            value: _wifiDownloadsOnly,
-            onChanged: (value) => setState(() => _wifiDownloadsOnly = value),
-          ),
-          const SizedBox(height: 18),
-          Text(
-            'Privacy',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: AppColors.heading,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          _SettingsSwitchTile(
-            label: 'Private Profile',
-            value: _privateProfile,
-            onChanged: (value) => setState(() => _privateProfile = value),
-          ),
-          const SizedBox(height: 4),
-          _SettingsActionTile(
-            label: 'Change Password',
-            onTap: () => Get.toNamed(AppRoutes.changePassword),
-          ),
-          _SettingsActionTile(
-            label: 'Privacy Policy',
-            onTap: () => Get.toNamed(AppRoutes.privacyPolicy),
-          ),
-          _SettingsActionTile(
-            label: 'Terms and Conditions',
-            onTap: () => Get.toNamed(AppRoutes.termsConditions),
-          ),
-          const SizedBox(height: 20),
-          Text(
-            'Account',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: AppColors.heading,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 10),
-          _SettingsActionTile(
-            label: 'Log Out',
-            onTap: _openLogoutDialog,
-            textColor: const Color(0xFFE15A5A),
-            iconColor: const Color(0xFFE15A5A),
-            trailingIcon: Icons.logout_rounded,
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -504,7 +544,24 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       return;
     }
 
-    await _authSessionController.updatePassword(_newPasswordController.text);
+    final didUpdatePassword = await _authSessionController.updatePassword(
+      currentPassword: _currentPasswordController.text,
+      newPassword: _newPasswordController.text,
+    );
+
+    if (!didUpdatePassword) {
+      Get.snackbar(
+        'Password Update Failed',
+        _authSessionController.lastErrorMessage.isEmpty
+            ? 'Password update nahi ho saka.'
+            : _authSessionController.lastErrorMessage,
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.white,
+        colorText: AppColors.heading,
+        margin: const EdgeInsets.all(14),
+      );
+      return;
+    }
 
     if (!mounted) {
       return;

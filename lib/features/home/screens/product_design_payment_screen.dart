@@ -6,6 +6,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_buttons.dart';
 import '../controllers/message_center_controller.dart';
 import '../controllers/product_design_course_controller.dart';
+import '../models/payment_method_record.dart';
 import '../models/product_design_course_data.dart';
 
 enum _PaymentStep { method, password, success }
@@ -20,26 +21,25 @@ class ProductDesignPaymentScreen extends StatefulWidget {
 
 class _ProductDesignPaymentScreenState
     extends State<ProductDesignPaymentScreen> {
-  static const List<_PaymentCardData> _cards = [
-    _PaymentCardData(
-      maskedNumber: '•••• •••• •••• 4829',
-      label: 'My card',
+  static const List<({
+    Color startColor,
+    Color endColor,
+    Color blobOneColor,
+    Color blobTwoColor,
+  })> _palettes = [
+    (
       startColor: Color(0xFF3D5AFE),
       endColor: Color(0xFFE9E4FF),
       blobOneColor: Color(0xFF56D2FF),
       blobTwoColor: Color(0xFFE47BFF),
     ),
-    _PaymentCardData(
-      maskedNumber: '•••• •••• •••• 2641',
-      label: 'Work card',
+    (
       startColor: Color(0xFF4259F4),
       endColor: Color(0xFFDBC8FF),
       blobOneColor: Color(0xFF7DE8D0),
       blobTwoColor: Color(0xFFFF98C7),
     ),
-    _PaymentCardData(
-      maskedNumber: '•••• •••• •••• 3156',
-      label: 'Family card',
+    (
       startColor: Color(0xFF3D4BFF),
       endColor: Color(0xFFF0D9FF),
       blobOneColor: Color(0xFF6CD7FF),
@@ -57,7 +57,47 @@ class _ProductDesignPaymentScreenState
   String _paymentPin = '';
   bool _isProcessing = false;
 
-  void _openPasswordStep() {
+  @override
+  void initState() {
+    super.initState();
+    _courseController.loadPaymentMethods();
+  }
+
+  Future<void> _openPasswordStep(List<_PaymentCardData> cards) async {
+    if (cards.isEmpty) {
+      return;
+    }
+
+    final selectedCard = cards[_selectedCardIndex];
+    setState(() {
+      _isProcessing = true;
+    });
+
+    final didStartCheckout = await _courseController.startCheckout(
+      paymentMethodId: selectedCard.id,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (!didStartCheckout) {
+      setState(() {
+        _isProcessing = false;
+      });
+      Get.snackbar(
+        'Checkout Failed',
+        _courseController.lastErrorMessage.isEmpty
+            ? 'Payment checkout start nahi ho saka.'
+            : _courseController.lastErrorMessage,
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.white,
+        colorText: AppColors.heading,
+        margin: const EdgeInsets.all(14),
+      );
+      return;
+    }
+
     setState(() {
       _step = _PaymentStep.password;
       _paymentPin = '';
@@ -104,16 +144,33 @@ class _ProductDesignPaymentScreenState
       _isProcessing = true;
     });
 
-    await Future<void>.delayed(const Duration(milliseconds: 320));
-
-    if (!_courseController.isPurchased) {
-      _courseController.purchaseCourse();
-      _messageCenterController.recordPurchaseSuccess();
-    }
+    final didConfirmPurchase = await _courseController.confirmPurchase(
+      pin: _paymentPin,
+    );
 
     if (!mounted) {
       return;
     }
+
+    if (!didConfirmPurchase) {
+      setState(() {
+        _isProcessing = false;
+        _paymentPin = '';
+      });
+      Get.snackbar(
+        'Payment Failed',
+        _courseController.lastErrorMessage.isEmpty
+            ? 'Payment verify nahi ho saki.'
+            : _courseController.lastErrorMessage,
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.white,
+        colorText: AppColors.heading,
+        margin: const EdgeInsets.all(14),
+      );
+      return;
+    }
+
+    await _messageCenterController.recordPurchaseSuccess();
 
     setState(() {
       _step = _PaymentStep.success;
@@ -133,34 +190,185 @@ class _ProductDesignPaymentScreenState
     Get.back();
   }
 
+  List<_PaymentCardData> _buildCards(List<PaymentMethodRecord> methods) {
+    return methods.asMap().entries.map((entry) {
+      final palette = _palettes[entry.key % _palettes.length];
+      final method = entry.value;
+
+      return _PaymentCardData(
+        id: method.id,
+        maskedNumber: method.maskedNumber,
+        label: method.label,
+        startColor: palette.startColor,
+        endColor: palette.endColor,
+        blobOneColor: palette.blobOneColor,
+        blobTwoColor: palette.blobTwoColor,
+      );
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 260),
-        child: switch (_step) {
-          _PaymentStep.method => _PaymentMethodStep(
-            key: const ValueKey('payment-method'),
-            cards: _cards,
-            selectedCardIndex: _selectedCardIndex,
-            onSelectCard: _selectCard,
-            onPayNow: _openPasswordStep,
+    return GetBuilder<ProductDesignCourseController>(
+      builder: (controller) {
+        final cards = _buildCards(controller.paymentMethods);
+        final safeSelectedIndex = cards.isEmpty
+            ? 0
+            : (_selectedCardIndex >= cards.length ? 0 : _selectedCardIndex);
+
+        if (_selectedCardIndex != safeSelectedIndex) {
+          _selectedCardIndex = safeSelectedIndex;
+        }
+
+        return Scaffold(
+          backgroundColor: Colors.white,
+          body: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 260),
+            child: switch (_step) {
+              _PaymentStep.method => cards.isEmpty &&
+                      controller.isLoadingPaymentMethods
+                  ? _LoadingPaymentMethodStep(
+                      key: ValueKey('payment-loading'),
+                      message: controller.lastErrorMessage,
+                    )
+                  : cards.isEmpty
+                  ? _EmptyPaymentMethodStep(
+                      key: ValueKey('payment-empty'),
+                      message: controller.lastErrorMessage,
+                      onRetry: () => controller.loadPaymentMethods(
+                        forceRefresh: true,
+                      ),
+                    )
+                  : _PaymentMethodStep(
+                      key: const ValueKey('payment-method'),
+                      cards: cards,
+                      selectedCardIndex: safeSelectedIndex,
+                      isBusy: _isProcessing,
+                      helperMessage: controller.lastErrorMessage,
+                      onSelectCard: _selectCard,
+                      onPayNow: () => _openPasswordStep(cards),
+                    ),
+              _PaymentStep.password => cards.isEmpty
+                  ? _EmptyPaymentMethodStep(
+                      key: ValueKey('payment-empty-password'),
+                      message: controller.lastErrorMessage,
+                      onRetry: () => controller.loadPaymentMethods(
+                        forceRefresh: true,
+                      ),
+                    )
+                  : _PaymentPasswordStep(
+                      key: const ValueKey('payment-password'),
+                      card: cards[safeSelectedIndex],
+                      pinLength: _paymentPin.length,
+                      isProcessing: _isProcessing,
+                      onClose: Get.back,
+                      onDigitPressed: _appendDigit,
+                      onRemovePressed: _removeDigit,
+                    ),
+              _PaymentStep.success => _PaymentSuccessStep(
+                  key: const ValueKey('payment-success'),
+                  onPressed: _finishFlow,
+                ),
+            },
           ),
-          _PaymentStep.password => _PaymentPasswordStep(
-            key: const ValueKey('payment-password'),
-            card: _cards[_selectedCardIndex],
-            pinLength: _paymentPin.length,
-            isProcessing: _isProcessing,
-            onClose: Get.back,
-            onDigitPressed: _appendDigit,
-            onRemovePressed: _removeDigit,
+        );
+      },
+    );
+  }
+}
+
+class _LoadingPaymentMethodStep extends StatelessWidget {
+  const _LoadingPaymentMethodStep({
+    super.key,
+    required this.message,
+  });
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(color: AppColors.primary),
+              const SizedBox(height: 18),
+              Text(
+                'Payment methods load ho rahi hain...',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: AppColors.heading,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                message.isEmpty
+                    ? 'Backend se cards fetch ho rahe hain. Is ke baad checkout start hoga.'
+                    : message,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppColors.mutedText,
+                  height: 1.45,
+                ),
+              ),
+            ],
           ),
-          _PaymentStep.success => _PaymentSuccessStep(
-            key: const ValueKey('payment-success'),
-            onPressed: _finishFlow,
-          ),
-        },
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyPaymentMethodStep extends StatelessWidget {
+  const _EmptyPaymentMethodStep({
+    super.key,
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+        child: Column(
+          children: [
+            _PaymentHeader(title: 'Payment Method', onClose: Get.back),
+            const Spacer(),
+            Text(
+              'No payment methods available right now.',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: AppColors.heading,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message.isEmpty ? 'Please try again in a moment.' : message,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: AppColors.mutedText,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              child: AppPrimaryButton(
+                label: 'Retry',
+                onPressed: onRetry,
+              ),
+            ),
+            const Spacer(),
+          ],
+        ),
       ),
     );
   }
@@ -171,12 +379,16 @@ class _PaymentMethodStep extends StatelessWidget {
     super.key,
     required this.cards,
     required this.selectedCardIndex,
+    required this.isBusy,
+    required this.helperMessage,
     required this.onSelectCard,
     required this.onPayNow,
   });
 
   final List<_PaymentCardData> cards;
   final int selectedCardIndex;
+  final bool isBusy;
+  final String helperMessage;
   final ValueChanged<int> onSelectCard;
   final VoidCallback onPayNow;
 
@@ -233,10 +445,23 @@ class _PaymentMethodStep extends StatelessWidget {
                       );
                     }),
                   ),
+                  if (helperMessage.isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    Text(
+                      helperMessage,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.mutedText,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
-            AppPrimaryButton(label: 'Pay Now', onPressed: onPayNow),
+            AppPrimaryButton(
+              label: isBusy ? 'Please wait...' : 'Pay Now',
+              onPressed: isBusy ? null : onPayNow,
+            ),
           ],
         ),
       ),
@@ -787,6 +1012,7 @@ class _SuccessBadge extends StatelessWidget {
 
 class _PaymentCardData {
   const _PaymentCardData({
+    required this.id,
     required this.maskedNumber,
     required this.label,
     required this.startColor,
@@ -795,6 +1021,7 @@ class _PaymentCardData {
     required this.blobTwoColor,
   });
 
+  final String id;
   final String maskedNumber;
   final String label;
   final Color startColor;

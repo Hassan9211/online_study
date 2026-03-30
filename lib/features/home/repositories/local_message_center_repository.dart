@@ -122,6 +122,23 @@ class LocalMessageCenterRepository implements MessageCenterRepository {
   }
 
   @override
+  Future<void> markNotificationsRead({List<String>? ids}) async {
+    final currentState = await loadState();
+    final targetIds = ids?.toSet();
+
+    final updatedState = currentState.copyWith(
+      notifications: currentState.notifications.map((notification) {
+        if (targetIds == null || targetIds.contains(notification.id)) {
+          return notification.copyWith(isRead: true);
+        }
+        return notification;
+      }).toList(),
+    );
+
+    await saveState(updatedState);
+  }
+
+  @override
   Future<String> getAiGuestReply(String prompt) async {
     final lowerPrompt = prompt.toLowerCase();
 

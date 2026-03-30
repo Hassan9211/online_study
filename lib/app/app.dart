@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import 'routes/app_routes.dart';
+import '../core/network/api_client.dart';
 import '../core/controllers/network_controller.dart';
 import '../core/theme/app_theme.dart';
 import '../core/widgets/no_internet_screen.dart';
 import '../features/auth/controllers/auth_session_controller.dart';
 import '../features/auth/repositories/auth_session_repository.dart';
 import '../features/auth/repositories/local_auth_session_repository.dart';
+import '../features/auth/repositories/remote_auth_session_repository.dart';
+import '../features/auth/screens/forgot_password_screen.dart';
 import '../features/auth/screens/log_in_screen.dart';
 import '../features/auth/screens/phone_verification_screen.dart';
 import '../features/auth/screens/session_gate_screen.dart';
@@ -15,13 +18,21 @@ import '../features/auth/screens/sign_up_screen.dart';
 import '../features/home/controllers/message_center_controller.dart';
 import '../features/home/controllers/profile_controller.dart';
 import '../features/home/controllers/product_design_course_controller.dart';
+import '../features/home/controllers/settings_controller.dart';
 import '../features/home/repositories/local_message_center_repository.dart';
 import '../features/home/repositories/local_product_design_purchase_repository.dart';
 import '../features/home/repositories/local_profile_repository.dart';
+import '../features/home/repositories/local_settings_repository.dart';
 import '../features/home/repositories/local_support_repository.dart';
 import '../features/home/repositories/message_center_repository.dart';
 import '../features/home/repositories/product_design_purchase_repository.dart';
 import '../features/home/repositories/profile_repository.dart';
+import '../features/home/repositories/remote_message_center_repository.dart';
+import '../features/home/repositories/remote_product_design_purchase_repository.dart';
+import '../features/home/repositories/remote_profile_repository.dart';
+import '../features/home/repositories/remote_settings_repository.dart';
+import '../features/home/repositories/remote_support_repository.dart';
+import '../features/home/repositories/settings_repository.dart';
 import '../features/home/repositories/support_repository.dart';
 import '../features/home/screens/account_menu_screens.dart';
 import '../features/home/screens/home_screen.dart';
@@ -44,29 +55,103 @@ class OnlineStudyApp extends StatelessWidget {
       theme: AppTheme.lightTheme,
       initialRoute: AppRoutes.launch,
       initialBinding: BindingsBuilder(() {
-        if (!Get.isRegistered<AuthSessionRepository>()) {
-          Get.put<AuthSessionRepository>(
+        if (!Get.isRegistered<LocalAuthSessionRepository>()) {
+          Get.put<LocalAuthSessionRepository>(
             LocalAuthSessionRepository(),
             permanent: true,
           );
         }
+        if (!Get.isRegistered<LocalProfileRepository>()) {
+          Get.put<LocalProfileRepository>(
+            LocalProfileRepository(),
+            permanent: true,
+          );
+        }
+        if (!Get.isRegistered<LocalMessageCenterRepository>()) {
+          Get.put<LocalMessageCenterRepository>(
+            LocalMessageCenterRepository(),
+            permanent: true,
+          );
+        }
+        if (!Get.isRegistered<LocalProductDesignPurchaseRepository>()) {
+          Get.put<LocalProductDesignPurchaseRepository>(
+            LocalProductDesignPurchaseRepository(),
+            permanent: true,
+          );
+        }
+        if (!Get.isRegistered<LocalSupportRepository>()) {
+          Get.put<LocalSupportRepository>(
+            LocalSupportRepository(),
+            permanent: true,
+          );
+        }
+        if (!Get.isRegistered<LocalSettingsRepository>()) {
+          Get.put<LocalSettingsRepository>(
+            LocalSettingsRepository(),
+            permanent: true,
+          );
+        }
+        if (!Get.isRegistered<ApiClient>()) {
+          final localAuthStore = Get.find<LocalAuthSessionRepository>();
+          Get.put<ApiClient>(
+            ApiClient(localAuthStore.loadSession),
+            permanent: true,
+          );
+        }
+        if (!Get.isRegistered<AuthSessionRepository>()) {
+          Get.put<AuthSessionRepository>(
+            RemoteAuthSessionRepository(
+              Get.find<ApiClient>(),
+              Get.find<LocalAuthSessionRepository>(),
+            ),
+            permanent: true,
+          );
+        }
         if (!Get.isRegistered<ProfileRepository>()) {
-          Get.put<ProfileRepository>(LocalProfileRepository(), permanent: true);
+          Get.put<ProfileRepository>(
+            RemoteProfileRepository(
+              Get.find<ApiClient>(),
+              Get.find<LocalProfileRepository>(),
+              Get.find<LocalAuthSessionRepository>(),
+            ),
+            permanent: true,
+          );
         }
         if (!Get.isRegistered<MessageCenterRepository>()) {
           Get.put<MessageCenterRepository>(
-            LocalMessageCenterRepository(),
+            RemoteMessageCenterRepository(
+              Get.find<ApiClient>(),
+              Get.find<LocalMessageCenterRepository>(),
+              Get.find<LocalAuthSessionRepository>(),
+            ),
             permanent: true,
           );
         }
         if (!Get.isRegistered<ProductDesignPurchaseRepository>()) {
           Get.put<ProductDesignPurchaseRepository>(
-            LocalProductDesignPurchaseRepository(),
+            RemoteProductDesignPurchaseRepository(
+              Get.find<ApiClient>(),
+              Get.find<LocalProductDesignPurchaseRepository>(),
+              Get.find<LocalAuthSessionRepository>(),
+            ),
             permanent: true,
           );
         }
         if (!Get.isRegistered<SupportRepository>()) {
-          Get.put<SupportRepository>(LocalSupportRepository(), permanent: true);
+          Get.put<SupportRepository>(
+            RemoteSupportRepository(Get.find<ApiClient>()),
+            permanent: true,
+          );
+        }
+        if (!Get.isRegistered<SettingsRepository>()) {
+          Get.put<SettingsRepository>(
+            RemoteSettingsRepository(
+              Get.find<ApiClient>(),
+              Get.find<LocalSettingsRepository>(),
+              Get.find<LocalAuthSessionRepository>(),
+            ),
+            permanent: true,
+          );
         }
         if (!Get.isRegistered<AuthSessionController>()) {
           Get.put<AuthSessionController>(
@@ -86,6 +171,12 @@ class OnlineStudyApp extends StatelessWidget {
         if (!Get.isRegistered<MessageCenterController>()) {
           Get.put<MessageCenterController>(
             MessageCenterController(Get.find<MessageCenterRepository>()),
+            permanent: true,
+          );
+        }
+        if (!Get.isRegistered<SettingsController>()) {
+          Get.put<SettingsController>(
+            SettingsController(Get.find<SettingsRepository>()),
             permanent: true,
           );
         }
@@ -115,6 +206,10 @@ class OnlineStudyApp extends StatelessWidget {
         ),
         GetPage(name: AppRoutes.signUp, page: () => const SignUpScreen()),
         GetPage(name: AppRoutes.logIn, page: () => const LogInScreen()),
+        GetPage(
+          name: AppRoutes.forgotPassword,
+          page: () => const ForgotPasswordScreen(),
+        ),
         GetPage(
           name: AppRoutes.phoneVerification,
           page: () => const PhoneVerificationScreen(),

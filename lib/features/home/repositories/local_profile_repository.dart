@@ -37,7 +37,7 @@ class LocalProfileRepository implements ProfileRepository {
   }
 
   @override
-  Future<void> saveProfile(ProfileRecord profile) async {
+  Future<ProfileRecord> saveProfile(ProfileRecord profile) async {
     final preferences = await SharedPreferences.getInstance();
 
     await preferences.setString(_idKey, profile.id);
@@ -52,5 +52,15 @@ class LocalProfileRepository implements ProfileRepository {
     } else {
       await preferences.setString(_imagePathKey, profile.avatarLocalPath!);
     }
+
+    return profile;
+  }
+
+  @override
+  Future<ProfileRecord> uploadAvatar({
+    required ProfileRecord profile,
+    required String imagePath,
+  }) {
+    return saveProfile(profile.copyWith(avatarLocalPath: imagePath));
   }
 }

@@ -24,7 +24,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   bool get _canCreateAccount {
     return _emailController.text.trim().isNotEmpty &&
-        _passwordController.text.trim().isNotEmpty;
+        _passwordController.text.trim().isNotEmpty &&
+        _agreeToTerms;
   }
 
   void _handleCreateAccount() {
@@ -35,6 +36,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     _authSessionController.prepareRegistration(
       email: _emailController.text,
       password: _passwordController.text,
+      termsAccepted: _agreeToTerms,
     );
     Get.toNamed(AppRoutes.phoneVerification);
   }
