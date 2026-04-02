@@ -213,6 +213,8 @@ class RemoteCourseCatalogRepository implements CourseCatalogRepository {
       courseId,
       fallbackCourse: fallbackCourse,
     );
+    // Java Development is intentionally asset-backed in the app, so we keep the
+    // local detail instead of letting a partial backend payload override it.
     if (matchesJavaDevelopmentCourse(
       id: fallback.id.isEmpty ? courseId : fallback.id,
       title: fallback.title,
@@ -440,6 +442,8 @@ class RemoteCourseCatalogRepository implements CourseCatalogRepository {
     required List<String> unwrapKeys,
     required List<String> listKeys,
   }) {
+    // Different endpoints wrap arrays differently, so we progressively try the
+    // top-level body, common wrappers, and finally the original map again.
     if (body is List) {
       return asList(body);
     }
@@ -462,6 +466,7 @@ class RemoteCourseCatalogRepository implements CourseCatalogRepository {
     required List<String> unwrapKeys,
     required List<String> mapKeys,
   }) {
+    // Similar to _readListPayload(), but for object-shaped payloads.
     if (body is Map<String, dynamic>) {
       final payload = unwrapBody(body, keys: unwrapKeys);
       final payloadMap = asMap(payload);
@@ -520,7 +525,7 @@ class RemoteCourseCatalogRepository implements CourseCatalogRepository {
           ? productDesignCoursePriceValue.round()
           : normalizedPrice,
       durationHours: isJavaDevelopment
-          ? javaDevelopmentLessons.length
+          ? javaDevelopmentCourseDurationHours
           : _readDurationHours(map),
       category: readString(
         categoryMap,
@@ -598,7 +603,7 @@ class RemoteCourseCatalogRepository implements CourseCatalogRepository {
       ),
       price: normalizedPrice,
       durationHours: isJavaDevelopment
-          ? javaDevelopmentLessons.length
+          ? javaDevelopmentCourseDurationHours
           : _readPositiveInt(
               map,
               const ['duration_hours', 'durationHours', 'hours'],
@@ -964,6 +969,8 @@ class RemoteCourseCatalogRepository implements CourseCatalogRepository {
       return false;
     }
 
+    // The app owns the Java lesson lineup locally, so remote lesson payloads do
+    // not replace it.
     return true;
   }
 
@@ -987,6 +994,8 @@ class RemoteCourseCatalogRepository implements CourseCatalogRepository {
       return lessons;
     }
 
+    // Paid courses keep the first two lessons open as previews and lock the
+    // remaining lessons until the purchase succeeds.
     return lessons.asMap().entries.map((entry) {
       final index = entry.key;
       final lesson = entry.value;

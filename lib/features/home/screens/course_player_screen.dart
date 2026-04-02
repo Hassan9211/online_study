@@ -21,6 +21,7 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
   late int _currentLessonIndex;
 
   VideoPlayerController? _videoController;
+  String? _videoLoadError;
   bool _isLoading = true;
   bool _showOverlayControl = true;
   int _loadRequestId = 0;
@@ -75,6 +76,7 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
         _isLoading = false;
         _showOverlayControl = true;
         _videoController = null;
+        _videoLoadError = null;
       });
       return;
     }
@@ -89,6 +91,7 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
       _isLoading = true;
       _showOverlayControl = true;
       _videoController = controller;
+      _videoLoadError = null;
     });
     _lastWatchTickAt = null;
     _wasPlaying = false;
@@ -124,11 +127,16 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
       setState(() {
         _isLoading = false;
         _videoController = null;
+        // Avoid leaving the player stuck on a generic loading message when the
+        // underlying asset/url cannot be initialized.
+        _videoLoadError = 'Could not play this video. Rebuild the app and try again.';
       });
     }
   }
 
   VideoPlayerController _createVideoController(String source) {
+    // Bundled demo/course assets use `assets/...`, while backend-hosted lessons
+    // are opened as network URLs.
     if (_isAssetVideoSource(source)) {
       return VideoPlayerController.asset(source);
     }
@@ -414,6 +422,7 @@ class _CoursePlayerScreenState extends State<CoursePlayerScreen> {
                       showOverlayControl: _showOverlayControl,
                       maxHeight: maxPlayerHeight,
                       hasVideo: currentLesson.videoUrl.trim().isNotEmpty,
+                      errorMessage: _videoLoadError,
                       onSurfaceTap: _showControls,
                       onControlPressed: _togglePlayback,
                     ),
@@ -614,6 +623,7 @@ class _AdaptiveNetworkPlayerSurface extends StatelessWidget {
     required this.showOverlayControl,
     required this.maxHeight,
     required this.hasVideo,
+    required this.errorMessage,
     required this.onSurfaceTap,
     required this.onControlPressed,
   });
@@ -624,6 +634,7 @@ class _AdaptiveNetworkPlayerSurface extends StatelessWidget {
   final bool showOverlayControl;
   final double maxHeight;
   final bool hasVideo;
+  final String? errorMessage;
   final VoidCallback onSurfaceTap;
   final VoidCallback onControlPressed;
 
@@ -669,9 +680,10 @@ class _AdaptiveNetworkPlayerSurface extends StatelessWidget {
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 24),
                       child: Text(
-                        hasVideo
-                            ? 'Loading video...'
-                            : 'This lesson does not have a playable video URL yet.',
+                        errorMessage ??
+                            (hasVideo
+                                ? 'Loading video...'
+                                : 'This lesson does not have a playable video URL yet.'),
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: Colors.white.withValues(alpha: 0.72),

@@ -41,6 +41,8 @@ class AuthSessionController extends GetxController {
     _loadSession();
   }
 
+  // Signup starts before OTP verification, so we cache the entered fields here
+  // and reuse them if the verify step needs to fall back to a full signup call.
   void prepareRegistration({
     required String email,
     required String password,
@@ -87,6 +89,8 @@ class AuthSessionController extends GetxController {
       return false;
     }
 
+    // This step only asks the backend to issue an OTP. The user session is not
+    // created until verify-otp succeeds, or signup is used as a fallback.
     _logOtpDebug(
       'OTP send requested for email=$normalizedEmail phone=$normalizedPhone',
     );
@@ -138,6 +142,9 @@ class AuthSessionController extends GetxController {
     _lastErrorMessage = '';
 
     try {
+      // Some backends create the user and return a ready session on verify-otp.
+      // If they only confirm the code, we fall back to signup using the cached
+      // registration fields from prepareRegistration().
       final verifiedSession = await _repository.verifyOtp(
         email: normalizedEmail,
         phone: normalizedPhone,
@@ -349,6 +356,8 @@ class AuthSessionController extends GetxController {
   }
 
   Future<void> _refreshAppData() async {
+    // Auth state affects several tabs at once, so we refresh the shared
+    // controllers here after login/signup instead of waiting for manual reloads.
     final refreshTasks = <Future<void>>[];
 
     if (Get.isRegistered<ProfileController>()) {

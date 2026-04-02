@@ -1,3 +1,5 @@
+// Backend responses are not perfectly standardized across endpoints, so these
+// helpers keep repository code small while still supporting multiple key names.
 Map<String, dynamic> asMap(dynamic value) {
   if (value is Map<String, dynamic>) {
     return value;
@@ -23,6 +25,7 @@ dynamic unwrapBody(dynamic body, {List<String> keys = const ['data']}) {
     return body;
   }
 
+  // Many endpoints wrap the useful payload in `data`, `course`, `item`, etc.
   final map = asMap(body);
   for (final key in keys) {
     if (map.containsKey(key) && map[key] != null) {
@@ -61,6 +64,8 @@ List<dynamic> readList(
   return <dynamic>[];
 }
 
+// These readers try several aliases because the same concept can arrive under
+// different keys depending on the backend endpoint.
 String readString(
   Map<String, dynamic> json,
   List<String> keys, {

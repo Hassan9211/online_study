@@ -195,12 +195,15 @@ class LocalCourseCatalogRepository implements CourseCatalogRepository {
 
     if (matchesJavaDevelopmentCourse(id: courseId, title: course.title)) {
       final isPurchased = course.price <= 0;
+      // Java Development is bundled locally in the app, so its lesson list and
+      // asset paths come from java_development_course_data.dart instead of an
+      // API response.
       return CourseDetailRecord(
         id: course.id,
         title: javaDevelopmentCourseTitle,
         teacher: course.teacher,
         price: normalizeCoursePrice(course.price),
-        durationHours: 5,
+        durationHours: javaDevelopmentCourseDurationHours,
         category: course.category,
         lessonCount: javaDevelopmentLessons.length,
         description: course.shortDescription.isEmpty
@@ -218,6 +221,7 @@ class LocalCourseCatalogRepository implements CourseCatalogRepository {
             title: lesson.title,
             durationLabel: lesson.fallbackDurationLabel,
             videoUrl: lesson.assetPath,
+            // Paid generic courses keep the first two lessons open as previews.
             isLocked: !isPurchased && index >= _genericFreePreviewCount,
           );
         }).toList(),

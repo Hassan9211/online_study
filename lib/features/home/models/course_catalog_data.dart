@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'course_price_display.dart';
+import 'java_development_course_data.dart';
 
 class CourseCatalogItem {
   const CourseCatalogItem({
@@ -114,11 +115,11 @@ const List<CourseCatalogItem> courseCatalogItems = [
     title: 'Java Development',
     teacher: 'Nguyen Shane',
     price: 100,
-    durationHours: 5,
+    durationHours: javaDevelopmentCourseDurationHours,
     category: 'Coding',
     thumbnailColor: Color(0xFFD3D3D3),
-    lessonCount: 5,
-    shortDescription: 'Core Java video lessons for app and backend work.',
+    lessonCount: javaDevelopmentCourseLessonCount,
+    shortDescription: javaDevelopmentCourseDescription,
     isPopular: true,
   ),
   CourseCatalogItem(
