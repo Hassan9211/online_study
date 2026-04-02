@@ -5,28 +5,97 @@ import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../../app/routes/app_routes.dart';
+import '../../../core/network/api_endpoints.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_buttons.dart';
 import '../../auth/controllers/auth_session_controller.dart';
+import '../controllers/course_catalog_controller.dart';
 import '../controllers/message_center_controller.dart';
 import '../controllers/profile_controller.dart';
 import '../controllers/product_design_course_controller.dart';
 import '../controllers/settings_controller.dart';
-import '../models/product_design_course_data.dart';
+import '../models/course_detail_record.dart';
+import '../models/favourite_lesson_record.dart';
 import '../widgets/profile_avatar.dart';
 import 'message_screen.dart';
 
 class FavouriteVideosScreen extends StatelessWidget {
   const FavouriteVideosScreen({super.key});
 
-  static const List<int> _favouriteIndexes = [0, 1, 5, 7];
-
-  void _openFavourite(
+  Future<void> _openFavourite(
+    CourseCatalogController catalogController,
     ProductDesignCourseController controller,
-    int lessonIndex,
-  ) {
+    FavouriteLessonRecord lesson,
+  ) async {
+    if (!ApiConfig.matchesProductDesignCourse(
+      id: lesson.courseId,
+      title: lesson.courseTitle,
+    )) {
+      final fallbackCourse = catalogController.courseById(lesson.courseId);
+      final detail = await catalogController.loadCourseDetail(
+        lesson.courseId,
+        fallbackCourse: fallbackCourse,
+      );
+      final lessonIndex = _genericLessonIndexForFavourite(detail, lesson);
+      if (lessonIndex == null) {
+        Get.toNamed(
+          AppRoutes.courseDetail,
+          arguments: <String, dynamic>{
+            'courseId': lesson.courseId,
+            'course': fallbackCourse,
+          },
+        );
+        return;
+      }
+
+      final targetLesson = detail.lessons[lessonIndex];
+      if (targetLesson.isLocked && !detail.isPurchased) {
+        Get.toNamed(
+          AppRoutes.courseDetail,
+          arguments: <String, dynamic>{
+            'courseId': lesson.courseId,
+            'course': fallbackCourse,
+          },
+        );
+        return;
+      }
+
+      Get.toNamed(
+        AppRoutes.coursePlayer,
+        arguments: <String, dynamic>{
+          'detail': detail,
+          'lessonIndex': lessonIndex,
+        },
+      );
+      return;
+    }
+
+    ApiConfig.resolveProductDesignCourse(
+      id: lesson.courseId,
+      title: lesson.courseTitle,
+    );
+
+    final lessonIndex = catalogController.lessonIndexForFavourite(lesson);
+
+    if (lessonIndex == null) {
+      Get.toNamed(
+        AppRoutes.productDesignCourse,
+        arguments: <String, dynamic>{
+          'courseId': lesson.courseId,
+          'courseTitle': lesson.courseTitle,
+        },
+      );
+      return;
+    }
+
     if (controller.isLessonLocked(lessonIndex)) {
-      Get.toNamed(AppRoutes.productDesignCourse);
+      Get.toNamed(
+        AppRoutes.productDesignCourse,
+        arguments: <String, dynamic>{
+          'courseId': lesson.courseId,
+          'courseTitle': lesson.courseTitle,
+        },
+      );
       return;
     }
 
@@ -36,27 +105,91 @@ class FavouriteVideosScreen extends StatelessWidget {
     );
   }
 
+  int? _genericLessonIndexForFavourite(
+    CourseDetailRecord detail,
+    FavouriteLessonRecord lesson,
+  ) {
+    for (var index = 0; index < detail.lessons.length; index++) {
+      final courseLesson = detail.lessons[index];
+      final lessonId = courseLesson.id.toString().trim().toLowerCase();
+      if (lessonId.isNotEmpty &&
+          lessonId == lesson.lessonId.trim().toLowerCase()) {
+        return index;
+      }
+    }
+
+    for (var index = 0; index < detail.lessons.length; index++) {
+      final courseLesson = detail.lessons[index];
+      if (_normalizeKey(courseLesson.title.toString()) == _normalizeKey(lesson.title)) {
+        return index;
+      }
+    }
+
+    return null;
+  }
+
+  String _normalizeKey(String value) {
+    return value.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+  }
+
   @override
   Widget build(BuildContext context) {
-    return GetBuilder<ProductDesignCourseController>(
-      builder: (controller) {
-        return _AccountDetailScaffold(
-          title: 'Favourite',
-          child: Column(
-            children: _favouriteIndexes.map((lessonIndex) {
-              final lesson = productDesignLessons[lessonIndex];
+    return GetBuilder<CourseCatalogController>(
+      builder: (catalogController) {
+        return GetBuilder<ProductDesignCourseController>(
+          builder: (controller) {
+            final favouriteLessons = catalogController.favouriteLessons;
 
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 14),
-                child: _FavouriteVideoTile(
-                  title: lesson.title,
-                  durationLabel: controller.lessonDurationLabel(lessonIndex),
-                  isLocked: controller.isLessonLocked(lessonIndex),
-                  onTap: () => _openFavourite(controller, lessonIndex),
-                ),
-              );
-            }).toList(),
-          ),
+            return _AccountDetailScaffold(
+              title: 'Favourite',
+              child: catalogController.isLoadingFavourites &&
+                      favouriteLessons.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 60),
+                      child: Center(
+                        child: CircularProgressIndicator(
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    )
+                  : favouriteLessons.isEmpty
+                  ? const _FavouriteEmptyState()
+                  : Column(
+                      children: favouriteLessons.map((lesson) {
+                        final lessonIndex = catalogController.lessonIndexForFavourite(
+                          lesson,
+                        );
+                        final isProductDesignFavourite =
+                            ApiConfig.matchesProductDesignCourse(
+                              id: lesson.courseId,
+                              title: lesson.courseTitle,
+                            );
+                        final durationLabel = lessonIndex == null
+                            ? lesson.durationLabel
+                            : controller.lessonDurationLabel(lessonIndex);
+                        final isLocked = !isProductDesignFavourite
+                            ? false
+                            : lessonIndex == null
+                            ? true
+                            : controller.isLessonLocked(lessonIndex);
+
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 14),
+                          child: _FavouriteVideoTile(
+                            title: lesson.title,
+                            durationLabel: durationLabel,
+                            isLocked: isLocked,
+                            onTap: () => _openFavourite(
+                              catalogController,
+                              controller,
+                              lesson,
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+            );
+          },
         );
       },
     );
@@ -89,7 +222,7 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
       return;
     }
 
-    _nameController = TextEditingController(text: profileController.name);
+    _nameController = TextEditingController(text: profileController.displayName);
     _emailController = TextEditingController(text: profileController.email);
     _phoneController = TextEditingController(text: profileController.phone);
     _bioController = TextEditingController(text: profileController.bio);
@@ -114,7 +247,7 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
         Get.snackbar(
           'Photo Update Failed',
           _profileController.lastErrorMessage.isEmpty
-              ? 'Profile photo update nahi ho saki.'
+              ? 'Could not update the profile photo.'
               : _profileController.lastErrorMessage,
           snackPosition: SnackPosition.BOTTOM,
           backgroundColor: Colors.white,
@@ -217,7 +350,7 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
     Get.to(
       () => _ProfilePhotoViewer(
         imagePath: imagePath,
-        title: _profileController.name,
+        title: _profileController.displayName,
       ),
       transition: Transition.fadeIn,
     );
@@ -239,7 +372,7 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
       Get.snackbar(
         'Profile Update Failed',
         _profileController.lastErrorMessage.isEmpty
-            ? 'Profile save nahi ho saka.'
+            ? 'Could not save the profile.'
             : _profileController.lastErrorMessage,
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.white,
@@ -284,7 +417,8 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
           title: 'Edit Account',
           footer: AppPrimaryButton(
             label: 'Save Changes',
-            onPressed: _saveProfile,
+            onPressed: profileController.isSaving ? null : _saveProfile,
+            isLoading: profileController.isSaving,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -342,7 +476,7 @@ class _SettingsPrivacyScreenState extends State<SettingsPrivacyScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         title: const Text('Log Out'),
         content: const Text(
-          'Kya aap waqai apne account se log out karna chahte hain?',
+          'Are you sure you want to log out of your account?',
         ),
         actions: [
           TextButton(
@@ -494,11 +628,11 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   String? _validateCurrentPassword(String? value) {
     final password = value?.trim() ?? '';
     if (password.isEmpty) {
-      return 'Current password required hai.';
+      return 'Current password is required.';
     }
 
     if (!_authSessionController.isCurrentPasswordValid(password)) {
-      return 'Current password sahi nahi hai.';
+      return 'The current password is incorrect.';
     }
 
     return null;
@@ -507,15 +641,15 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   String? _validateNewPassword(String? value) {
     final password = value?.trim() ?? '';
     if (password.isEmpty) {
-      return 'New password required hai.';
+      return 'New password is required.';
     }
 
     if (password.length < 6) {
-      return 'New password kam az kam 6 characters ka ho.';
+      return 'New password must be at least 6 characters long.';
     }
 
     if (password == _currentPasswordController.text.trim()) {
-      return 'New password current password se different ho.';
+      return 'New password must be different from the current password.';
     }
 
     return null;
@@ -524,11 +658,11 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   String? _validateConfirmPassword(String? value) {
     final password = value?.trim() ?? '';
     if (password.isEmpty) {
-      return 'Confirm password required hai.';
+      return 'Confirm password is required.';
     }
 
     if (password != _newPasswordController.text.trim()) {
-      return 'Confirm password new password se match nahi kar raha.';
+      return 'Confirm password does not match the new password.';
     }
 
     return null;
@@ -553,7 +687,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       Get.snackbar(
         'Password Update Failed',
         _authSessionController.lastErrorMessage.isEmpty
-            ? 'Password update nahi ho saka.'
+            ? 'Could not update the password.'
             : _authSessionController.lastErrorMessage,
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.white,
@@ -570,7 +704,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     Get.back();
     Get.snackbar(
       'Password Updated',
-      'Aap ka password successfully change ho gaya.',
+      'Your password has been changed successfully.',
       snackPosition: SnackPosition.BOTTOM,
       backgroundColor: Colors.white,
       colorText: AppColors.heading,
@@ -583,94 +717,99 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return _AccountDetailScaffold(
-      title: 'Change Password',
-      footer: AppPrimaryButton(
-        label: 'Save Password',
-        onPressed: _savePassword,
-      ),
-      child: Form(
-        key: _formKey,
-        autovalidateMode: _showValidation
-            ? AutovalidateMode.onUserInteraction
-            : AutovalidateMode.disabled,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF4F6FF),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Account Email',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: AppColors.mutedText,
-                      fontWeight: FontWeight.w600,
-                    ),
+    return GetBuilder<AuthSessionController>(
+      builder: (authSessionController) {
+        return _AccountDetailScaffold(
+          title: 'Change Password',
+          footer: AppPrimaryButton(
+            label: 'Save Password',
+            onPressed: authSessionController.isBusy ? null : _savePassword,
+            isLoading: authSessionController.isBusy,
+          ),
+          child: Form(
+            key: _formKey,
+            autovalidateMode: _showValidation
+                ? AutovalidateMode.onUserInteraction
+                : AutovalidateMode.disabled,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF4F6FF),
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _accountEmail.isEmpty
-                        ? 'No email available'
-                        : _accountEmail,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      color: AppColors.heading,
-                      fontWeight: FontWeight.w800,
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Account Email',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: AppColors.mutedText,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        _accountEmail.isEmpty
+                            ? 'No email available'
+                            : _accountEmail,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: AppColors.heading,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 22),
+                _PasswordFormField(
+                  label: 'Current Password',
+                  controller: _currentPasswordController,
+                  obscureText: _obscureCurrentPassword,
+                  validator: _validateCurrentPassword,
+                  onVisibilityToggle: () {
+                    setState(() {
+                      _obscureCurrentPassword = !_obscureCurrentPassword;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                _PasswordFormField(
+                  label: 'New Password',
+                  controller: _newPasswordController,
+                  obscureText: _obscureNewPassword,
+                  validator: _validateNewPassword,
+                  onChanged: (_) {
+                    if (_showValidation) {
+                      setState(() {});
+                    }
+                  },
+                  onVisibilityToggle: () {
+                    setState(() {
+                      _obscureNewPassword = !_obscureNewPassword;
+                    });
+                  },
+                ),
+                const SizedBox(height: 16),
+                _PasswordFormField(
+                  label: 'Confirm Password',
+                  controller: _confirmPasswordController,
+                  obscureText: _obscureConfirmPassword,
+                  validator: _validateConfirmPassword,
+                  onVisibilityToggle: () {
+                    setState(() {
+                      _obscureConfirmPassword = !_obscureConfirmPassword;
+                    });
+                  },
+                ),
+              ],
             ),
-            const SizedBox(height: 22),
-            _PasswordFormField(
-              label: 'Current Password',
-              controller: _currentPasswordController,
-              obscureText: _obscureCurrentPassword,
-              validator: _validateCurrentPassword,
-              onVisibilityToggle: () {
-                setState(() {
-                  _obscureCurrentPassword = !_obscureCurrentPassword;
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-            _PasswordFormField(
-              label: 'New Password',
-              controller: _newPasswordController,
-              obscureText: _obscureNewPassword,
-              validator: _validateNewPassword,
-              onChanged: (_) {
-                if (_showValidation) {
-                  setState(() {});
-                }
-              },
-              onVisibilityToggle: () {
-                setState(() {
-                  _obscureNewPassword = !_obscureNewPassword;
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-            _PasswordFormField(
-              label: 'Confirm Password',
-              controller: _confirmPasswordController,
-              obscureText: _obscureConfirmPassword,
-              validator: _validateConfirmPassword,
-              onVisibilityToggle: () {
-                setState(() {
-                  _obscureConfirmPassword = !_obscureConfirmPassword;
-                });
-              },
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -919,6 +1058,55 @@ class _FavouriteVideoTile extends StatelessWidget {
   }
 }
 
+class _FavouriteEmptyState extends StatelessWidget {
+  const _FavouriteEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FF),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.favorite_border_rounded,
+              color: AppColors.primary,
+              size: 28,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'No favourite lessons yet',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: AppColors.heading,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Favourite lessons from your account will appear here.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: AppColors.mutedText,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _EditableProfileHeader extends StatelessWidget {
   const _EditableProfileHeader({required this.onTap});
 
@@ -939,7 +1127,7 @@ class _EditableProfileHeader extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              profileController.name,
+              profileController.displayName,
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                 color: AppColors.heading,
                 fontWeight: FontWeight.w800,

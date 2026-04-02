@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:get/get.dart';
 
 import '../models/app_settings_record.dart';
@@ -24,11 +26,28 @@ class SettingsController extends GetxController {
   @override
   void onInit() {
     super.onInit();
-    _loadSettings();
+    unawaited(_bootstrap());
+  }
+
+  Future<void> _bootstrap() async {
+    final cachedSettings = await _repository.loadCachedSettings();
+    _settings = cachedSettings;
+    _isLoaded = true;
+    update();
+    await _loadSettings();
   }
 
   Future<void> refreshSettings() async {
     await _loadSettings();
+  }
+
+  Future<void> resetForSignedOutUser() async {
+    _settings = const AppSettingsRecord.defaults();
+    _isLoaded = true;
+    _isSaving = false;
+    _lastErrorMessage = '';
+    await _repository.clearCachedSettings();
+    update();
   }
 
   Future<bool> updateSettings({
@@ -37,22 +56,25 @@ class SettingsController extends GetxController {
     bool? wifiDownloadsOnly,
     bool? privateProfile,
   }) async {
+    final previousSettings = _settings;
+    final nextSettings = _settings.copyWith(
+      pushNotifications: pushNotifications,
+      courseReminders: courseReminders,
+      wifiDownloadsOnly: wifiDownloadsOnly,
+      privateProfile: privateProfile,
+    );
+
+    _settings = nextSettings;
     _isSaving = true;
     _lastErrorMessage = '';
     update();
 
     try {
-      _settings = await _repository.saveSettings(
-        _settings.copyWith(
-          pushNotifications: pushNotifications,
-          courseReminders: courseReminders,
-          wifiDownloadsOnly: wifiDownloadsOnly,
-          privateProfile: privateProfile,
-        ),
-      );
+      _settings = await _repository.saveSettings(nextSettings);
       update();
       return true;
     } catch (error) {
+      _settings = previousSettings;
       _lastErrorMessage = error.toString();
       update();
       return false;

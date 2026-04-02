@@ -120,6 +120,7 @@ class _AvatarContent extends StatelessWidget {
       child: hasImage
           ? Image.file(
               imageFile,
+              key: ValueKey(imageFile.path),
               fit: BoxFit.cover,
               width: avatarSize,
               height: avatarSize,
@@ -127,6 +128,7 @@ class _AvatarContent extends StatelessWidget {
           : hasAvatarUrl
           ? Image.network(
               avatarUrl,
+              key: ValueKey(avatarUrl),
               fit: BoxFit.cover,
               width: avatarSize,
               height: avatarSize,

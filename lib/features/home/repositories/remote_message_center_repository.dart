@@ -25,6 +25,15 @@ class RemoteMessageCenterRepository implements MessageCenterRepository {
     Color(0xFFFFE4EB),
     Color(0xFFDDF8EF),
   ];
+  static const String _aiGuestAppContext =
+      'Online Study app context: onboarding, login, signup, OTP verification, Product Design v1.0 course, checkout with payment methods and payment password, lesson playback, course progress, my courses, favourites, notifications, AI guest chat, edit account, profile photo updates, settings and privacy, change password, and support requests.';
+  static const String _aiGuestInstruction =
+      'Answer specifically about the Online Study app. Use the user question directly, avoid repeating the previous answer when the question changes, and mention the relevant screen or next step when possible.';
+
+  @override
+  Future<MessageCenterState> loadCachedState() {
+    return _localStore.loadState();
+  }
 
   @override
   Future<MessageCenterState> loadState() async {
@@ -34,19 +43,19 @@ class RemoteMessageCenterRepository implements MessageCenterRepository {
     }
 
     try {
-      final conversationsBody = await _apiClient.getJson(
-        ApiEndpoints.messages.conversations,
-      );
-      final notificationsBody = await _apiClient.getJson(
-        ApiEndpoints.notifications.list,
-      );
+      final responses = await Future.wait<dynamic>(<Future<dynamic>>[
+        _apiClient.getJson(ApiEndpoints.messages.conversations),
+        _apiClient.getJson(ApiEndpoints.notifications.list),
+      ]);
+      final conversationsBody = responses[0];
+      final notificationsBody = responses[1];
 
       final conversations = _parseConversations(conversationsBody);
       final notifications = _parseNotifications(notificationsBody);
       final aiGuestConversation = _findAiGuestConversation(conversations);
       final aiGuestMessages = aiGuestConversation == null
           ? cachedState.aiGuestMessages
-          : await _loadConversationMessages(aiGuestConversation.id);
+          : await loadConversationMessages(aiGuestConversation.id);
 
       final remoteState = MessageCenterState(
         conversations: conversations.isEmpty
@@ -67,6 +76,11 @@ class RemoteMessageCenterRepository implements MessageCenterRepository {
       );
       await _localStore.saveState(remoteState);
       return remoteState;
+    } on ApiException catch (error) {
+      if (error.statusCode == 401) {
+        await _expireSession();
+      }
+      return cachedState;
     } catch (_) {
       return cachedState;
     }
@@ -78,7 +92,18 @@ class RemoteMessageCenterRepository implements MessageCenterRepository {
   }
 
   @override
+  Future<void> clearCachedState() {
+    return _localStore.clearCachedState();
+  }
+
+  @override
   Future<String> getAiGuestReply(String prompt) async {
+    if (!ApiConfig.useRemoteAiGuest) {
+      return _localStore.getAiGuestReply(prompt);
+    }
+
+    final recentHistory = await _recentAiGuestHistory();
+    final lastAssistantReply = _lastAssistantReply(recentHistory);
     if (!await _hasAccessToken()) {
       return _localStore.getAiGuestReply(prompt);
     }
@@ -88,13 +113,19 @@ class RemoteMessageCenterRepository implements MessageCenterRepository {
         ApiEndpoints.messages.aiGuestChat,
         body: <String, dynamic>{
           'message': prompt,
-          'prompt': prompt,
+          'context': _aiGuestAppContext,
+          'instruction': _aiGuestInstruction,
+          'history': recentHistory,
         },
       );
 
       final reply = _extractReply(body);
-      if (reply.isNotEmpty) {
+      if (!_shouldUseLocalFallback(prompt, reply, lastAssistantReply)) {
         return reply;
+      }
+    } on ApiException catch (error) {
+      if (error.statusCode == 401) {
+        await _expireSession();
       }
     } catch (_) {
       // Fall back to local deterministic responses.
@@ -110,10 +141,18 @@ class RemoteMessageCenterRepository implements MessageCenterRepository {
     }
 
     try {
-      final body = ids == null
-          ? <String, dynamic>{}
-          : <String, dynamic>{'ids': ids};
-      await _apiClient.postJson(ApiEndpoints.notifications.read, body: body);
+      if (ids != null && ids.length == 1) {
+        await _apiClient.postJson(ApiEndpoints.notifications.detailRead(ids.first));
+      } else {
+        final body = ids == null
+            ? <String, dynamic>{}
+            : <String, dynamic>{'ids': ids};
+        await _apiClient.postJson(ApiEndpoints.notifications.read, body: body);
+      }
+    } on ApiException catch (error) {
+      if (error.statusCode == 401) {
+        await _expireSession();
+      }
     } catch (_) {
       // Local cache should still be updated for UX continuity.
     }
@@ -121,9 +160,84 @@ class RemoteMessageCenterRepository implements MessageCenterRepository {
     await _localStore.markNotificationsRead(ids: ids);
   }
 
+  @override
+  Future<List<SupportChatMessage>> loadConversationMessages(
+    String conversationId,
+  ) async {
+    try {
+      final body = await _apiClient.getJson(
+        ApiEndpoints.messages.detail(conversationId),
+      );
+      final root = asMap(body);
+      final payload = unwrapBody(body, keys: const ['data', 'conversation']);
+      final messagesPayload = payload is Map
+          ? readList(asMap(payload), const ['messages'])
+          : payload;
+      final list = messagesPayload is List
+          ? messagesPayload
+          : readList(root, const ['messages', 'data']);
+
+      final messages = list.map((item) {
+        return _parseChatMessage(asMap(item));
+      }).where((message) {
+        return message.text.trim().isNotEmpty;
+      }).toList();
+
+      if (messages.isNotEmpty) {
+        return messages;
+      }
+    } on ApiException catch (error) {
+      if (error.statusCode == 401) {
+        await _expireSession();
+      }
+    } catch (_) {
+      // Fall back to local seed content below.
+    }
+
+    return _localStore.loadConversationMessages(conversationId);
+  }
+
+  @override
+  Future<SupportChatMessage> sendConversationMessage({
+    required String conversationId,
+    required String text,
+  }) async {
+    try {
+      final body = await _apiClient.postJson(
+        ApiEndpoints.messages.send(conversationId),
+        body: <String, dynamic>{
+          'message': text,
+        },
+      );
+      final payload = asMap(unwrapBody(body, keys: const ['data', 'message']));
+      final parsed = _parseChatMessage(
+        payload.isEmpty ? asMap(body) : payload,
+        fallbackText: text,
+      );
+      if (parsed.text.trim().isNotEmpty) {
+        return parsed;
+      }
+    } on ApiException catch (error) {
+      if (error.statusCode == 401) {
+        await _expireSession();
+      }
+    } catch (_) {
+      // Use local optimistic message if the backend send fails.
+    }
+
+    return _localStore.sendConversationMessage(
+      conversationId: conversationId,
+      text: text,
+    );
+  }
+
   Future<bool> _hasAccessToken() async {
     final session = await _authStore.loadSession();
     return session.accessToken.trim().isNotEmpty;
+  }
+
+  Future<void> _expireSession() {
+    return _authStore.invalidateSession();
   }
 
   List<MessageConversation> _parseConversations(dynamic body) {
@@ -214,51 +328,37 @@ class RemoteMessageCenterRepository implements MessageCenterRepository {
     }).toList();
   }
 
-  Future<List<SupportChatMessage>> _loadConversationMessages(
-    String conversationId,
-  ) async {
-    try {
-      final body = await _apiClient.getJson(
-        ApiEndpoints.messages.detail(conversationId),
-      );
-      final root = asMap(body);
-      final payload = unwrapBody(body, keys: const ['data', 'conversation']);
-      final messagesPayload = payload is Map
-          ? readList(asMap(payload), const ['messages'])
-          : payload;
-      final list = messagesPayload is List
-          ? messagesPayload
-          : readList(root, const ['messages', 'data']);
+  SupportChatMessage _parseChatMessage(
+    Map<String, dynamic> map, {
+    String fallbackText = '',
+  }) {
+    final sender = readString(
+      map,
+      const ['sender_type', 'senderType', 'role'],
+      fallback: MessageSenderType.user.name,
+    );
 
-      return list.map((item) {
-        final map = asMap(item);
-        final sender = readString(
-          map,
-          const ['sender_type', 'senderType', 'role'],
-          fallback: MessageSenderType.user.name,
-        );
-
-        return SupportChatMessage(
-          id: readString(map, const ['id', 'message_id']),
-          text: readString(
+    return SupportChatMessage(
+      id: readString(
+        map,
+        const ['id', 'message_id'],
+        fallback: 'message_${DateTime.now().millisecondsSinceEpoch}',
+      ),
+      text: readString(
+        map,
+        const ['text', 'message', 'body', 'content'],
+        fallback: fallbackText,
+      ),
+      senderType: sender.toLowerCase().contains('assistant') ||
+              sender.toLowerCase().contains('ai')
+          ? MessageSenderType.assistant
+          : MessageSenderType.user,
+      timestamp: readDateTime(
             map,
-            const ['text', 'message', 'body', 'content'],
-            fallback: '',
-          ),
-          senderType: sender.toLowerCase().contains('assistant') ||
-                  sender.toLowerCase().contains('ai')
-              ? MessageSenderType.assistant
-              : MessageSenderType.user,
-          timestamp: readDateTime(
-                map,
-                const ['timestamp', 'created_at', 'updated_at'],
-              ) ??
-              DateTime.now(),
-        );
-      }).toList();
-    } catch (_) {
-      return (await _localStore.loadState()).aiGuestMessages;
-    }
+            const ['timestamp', 'created_at', 'updated_at'],
+          ) ??
+          DateTime.now(),
+    );
   }
 
   MessageConversation? _findAiGuestConversation(
@@ -274,19 +374,19 @@ class RemoteMessageCenterRepository implements MessageCenterRepository {
 
   String _extractReply(dynamic body) {
     final root = asMap(body);
-    final directReply = readString(
-      root,
-      const ['reply', 'response', 'message', 'text'],
+    final data = asMap(unwrapBody(body, keys: const ['data', 'result']));
+    final dataReply = readString(
+      data,
+      const ['reply', 'response', 'message', 'text', 'content', 'answer', 'output'],
     );
-    if (directReply.isNotEmpty) {
-      return directReply;
+    if (dataReply.isNotEmpty && !_isStatusMessage(dataReply)) {
+      return dataReply;
     }
 
-    final data = asMap(unwrapBody(body, keys: const ['data', 'result']));
     final assistant = readMap(data, const ['assistant', 'message']);
     final assistantReply = readString(
       assistant,
-      const ['text', 'message', 'body', 'content'],
+      const ['text', 'message', 'body', 'content', 'answer'],
     );
     if (assistantReply.isNotEmpty) {
       return assistantReply;
@@ -300,8 +400,121 @@ class RemoteMessageCenterRepository implements MessageCenterRepository {
           sender.toLowerCase().contains('ai')) {
         return readString(
           map,
-          const ['text', 'message', 'body', 'content'],
+          const ['text', 'message', 'body', 'content', 'answer'],
         );
+      }
+    }
+
+    final directReply = readString(
+      root,
+      const ['reply', 'response', 'message', 'text', 'answer', 'output'],
+    );
+    if (directReply.isNotEmpty && !_isStatusMessage(directReply)) {
+      return directReply;
+    }
+
+    return '';
+  }
+
+  bool _isStatusMessage(String value) {
+    final normalized = value.trim().toLowerCase();
+    const genericMessages = <String>{
+      'ok',
+      'success',
+      'request successful',
+      'message received',
+      'chat request received',
+      'ai guest response generated',
+    };
+
+    if (genericMessages.contains(normalized)) {
+      return true;
+    }
+
+    return normalized.startsWith('your request') ||
+        normalized.startsWith('request ') ||
+        normalized.startsWith('message ');
+  }
+
+  bool _shouldUseLocalFallback(
+    String prompt,
+    String reply,
+    String lastAssistantReply,
+  ) {
+    final normalizedReply = reply.trim();
+    if (normalizedReply.isEmpty) {
+      return true;
+    }
+
+    final normalizedLowerReply = normalizedReply.toLowerCase();
+    final normalizedPrompt = prompt.trim().toLowerCase();
+    final normalizedLastAssistant = lastAssistantReply.trim().toLowerCase();
+
+    if (_isStatusMessage(normalizedReply)) {
+      return true;
+    }
+
+    if (normalizedLastAssistant.isNotEmpty &&
+        normalizedLastAssistant == normalizedLowerReply &&
+        !_isGreetingPrompt(normalizedPrompt)) {
+      return true;
+    }
+
+    if (_isGenericReply(normalizedLowerReply) &&
+        !_isGreetingPrompt(normalizedPrompt)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  bool _isGenericReply(String value) {
+    const genericReplies = <String>{
+      'hello, i am ai guest. how can i help you today?',
+      'i can help with courses, notifications, payments, profile settings, and lessons. ask a more specific question and i will give a clearer answer.',
+      'if your question is about a screen, course, payment, account feature, or support flow, i can guide you.',
+      'you can ask me about course unlocks, playback, account updates, notifications, or support requests.',
+    };
+
+    if (genericReplies.contains(value)) {
+      return true;
+    }
+
+    return value.startsWith('thanks for your question') ||
+        value.contains('tie this back to the lesson objectives') ||
+        value.contains('try a small exercise from the course') ||
+        value.contains('revisit your notes after watching the related video') ||
+        value.startsWith('how can i help') ||
+        value.startsWith('please ask') ||
+        value.startsWith('i can help with');
+  }
+
+  bool _isGreetingPrompt(String prompt) {
+    return prompt.contains('hello') ||
+        prompt.contains('hi') ||
+        prompt.contains('hey') ||
+        prompt.contains('salam') ||
+        prompt.contains('assalam');
+  }
+
+  Future<List<Map<String, String>>> _recentAiGuestHistory() async {
+    final state = await _localStore.loadState();
+    final recentMessages = state.aiGuestMessages.length <= 8
+        ? state.aiGuestMessages
+        : state.aiGuestMessages.sublist(state.aiGuestMessages.length - 8);
+
+    return recentMessages.map((message) {
+      return <String, String>{
+        'role': message.isUser ? 'user' : 'assistant',
+        'content': message.text,
+      };
+    }).toList();
+  }
+
+  String _lastAssistantReply(List<Map<String, String>> history) {
+    for (final item in history.reversed) {
+      if ((item['role'] ?? '') == 'assistant') {
+        return item['content'] ?? '';
       }
     }
 
@@ -346,3 +559,4 @@ class RemoteMessageCenterRepository implements MessageCenterRepository {
     return maxValue == 0 ? fallback : maxValue + 1;
   }
 }
+

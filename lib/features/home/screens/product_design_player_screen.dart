@@ -5,8 +5,11 @@ import 'package:get/get.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../../app/routes/app_routes.dart';
+import '../../../core/network/api_endpoints.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_buttons.dart';
+import '../controllers/course_catalog_controller.dart';
+import '../controllers/home_dashboard_controller.dart';
 import '../controllers/product_design_course_controller.dart';
 import '../models/product_design_course_data.dart';
 
@@ -25,6 +28,9 @@ class _ProductDesignPlayerScreenState extends State<ProductDesignPlayerScreen> {
   bool _showOverlayControl = true;
   int _loadRequestId = 0;
   Timer? _overlayHideTimer;
+  Timer? _progressSyncTimer;
+  DateTime? _lastWatchTickAt;
+  bool _wasPlaying = false;
 
   ProductDesignCourseController get _courseController =>
       Get.find<ProductDesignCourseController>();
@@ -41,6 +47,7 @@ class _ProductDesignPlayerScreenState extends State<ProductDesignPlayerScreen> {
 
   @override
   void dispose() {
+    _stopProgressTracking(flush: true);
     _overlayHideTimer?.cancel();
     _videoController?.removeListener(_handleVideoValueChanged);
     _videoController?.dispose();
@@ -48,6 +55,7 @@ class _ProductDesignPlayerScreenState extends State<ProductDesignPlayerScreen> {
   }
 
   Future<void> _loadLesson(int index, {bool autoPlay = false}) async {
+    _stopProgressTracking(flush: true);
     final requestId = ++_loadRequestId;
     final previousController = _videoController;
     final controller = VideoPlayerController.asset(
@@ -63,6 +71,8 @@ class _ProductDesignPlayerScreenState extends State<ProductDesignPlayerScreen> {
       _showOverlayControl = true;
       _videoController = controller;
     });
+    _lastWatchTickAt = null;
+    _wasPlaying = false;
 
     await controller.initialize();
     await controller.setLooping(false);
@@ -154,12 +164,21 @@ class _ProductDesignPlayerScreenState extends State<ProductDesignPlayerScreen> {
     }
 
     final value = controller.value;
+    if (value.isPlaying != _wasPlaying) {
+      _wasPlaying = value.isPlaying;
+      if (_wasPlaying) {
+        _startProgressTracking();
+      } else {
+        _stopProgressTracking(flush: true);
+      }
+    }
     final hasEnded = value.isInitialized &&
         value.duration > Duration.zero &&
         value.position >= value.duration &&
         !value.isPlaying;
 
     if (hasEnded) {
+      _stopProgressTracking(flush: true);
       _overlayHideTimer?.cancel();
       if (!_showOverlayControl) {
         setState(() {
@@ -172,11 +191,65 @@ class _ProductDesignPlayerScreenState extends State<ProductDesignPlayerScreen> {
     setState(() {});
   }
 
+  void _startProgressTracking() {
+    _progressSyncTimer?.cancel();
+    _lastWatchTickAt = DateTime.now();
+    _progressSyncTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _recordPlaybackProgress();
+    });
+  }
+
+  void _stopProgressTracking({bool flush = false}) {
+    _progressSyncTimer?.cancel();
+    _progressSyncTimer = null;
+    if (flush) {
+      _recordPlaybackProgress(force: true);
+    }
+    _lastWatchTickAt = null;
+  }
+
+  Future<void> _recordPlaybackProgress({bool force = false}) async {
+    final controller = _videoController;
+    if (controller == null || !controller.value.isInitialized) {
+      return;
+    }
+
+    final now = DateTime.now();
+    final lastWatchTickAt = _lastWatchTickAt;
+    final rawDelta = lastWatchTickAt == null
+        ? Duration.zero
+        : now.difference(lastWatchTickAt);
+    final watchedDelta = rawDelta > const Duration(seconds: 12)
+        ? const Duration(seconds: 12)
+        : rawDelta;
+
+    _lastWatchTickAt = now;
+
+    if (!force && watchedDelta <= Duration.zero) {
+      return;
+    }
+
+    if (!Get.isRegistered<HomeDashboardController>()) {
+      return;
+    }
+
+    final lesson = productDesignLessons[_currentLessonIndex];
+    await Get.find<HomeDashboardController>().recordLessonProgress(
+      courseId: ApiConfig.productDesignCourseId,
+      lessonId: lesson.id,
+      position: controller.value.position,
+      totalDuration: controller.value.duration,
+      watchedDelta: watchedDelta,
+      courseTitle: productDesignCourseTitle,
+      totalLessons: productDesignLessons.length,
+    );
+  }
+
   Future<void> _selectLesson(int index) async {
     if (_courseController.isLessonLocked(index)) {
       Get.snackbar(
         'Video Locked',
-        'Buy Now k baad yeh video play hogi.',
+        'Purchase the course to unlock this video.',
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.white,
         colorText: AppColors.heading,
@@ -195,18 +268,68 @@ class _ProductDesignPlayerScreenState extends State<ProductDesignPlayerScreen> {
     Get.toNamed(AppRoutes.productDesignPayment);
   }
 
+  Future<void> _toggleLessonFavourite(
+    CourseCatalogController catalogController,
+  ) async {
+    final lesson = productDesignLessons[_currentLessonIndex];
+    final isFavourite = catalogController.isLessonFavourite(lesson.id);
+    final nextValue = !isFavourite;
+    final didUpdate = await catalogController.setLessonFavourite(
+      courseId: ApiConfig.productDesignCourseId,
+      courseTitle: productDesignCourseTitle,
+      lessonId: lesson.id,
+      lessonTitle: lesson.title,
+      durationLabel: _courseController.lessonDurationLabel(_currentLessonIndex),
+      isFavourite: nextValue,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (!didUpdate) {
+      Get.snackbar(
+        'Favourite Update Failed',
+        catalogController.lastErrorMessage.isEmpty
+            ? 'Could not update the favourite lesson right now.'
+            : catalogController.lastErrorMessage,
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.white,
+        colorText: AppColors.heading,
+        margin: const EdgeInsets.all(14),
+      );
+      return;
+    }
+
+    Get.snackbar(
+      nextValue ? 'Lesson Saved' : 'Lesson Removed',
+      nextValue
+          ? 'This lesson was added to your favourites.'
+          : 'This lesson was removed from your favourites.',
+      snackPosition: SnackPosition.BOTTOM,
+      backgroundColor: Colors.white,
+      colorText: AppColors.heading,
+      margin: const EdgeInsets.all(14),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final screenSize = MediaQuery.sizeOf(context);
     final maxPlayerHeight = screenSize.height * 0.42;
 
-    return GetBuilder<ProductDesignCourseController>(
-      builder: (controller) {
-        final currentLesson = productDesignLessons[_currentLessonIndex];
-        final isPlaying = _videoController?.value.isPlaying ?? false;
+    return GetBuilder<CourseCatalogController>(
+      builder: (catalogController) {
+        final isFavourite = catalogController.isLessonFavourite(
+          productDesignLessons[_currentLessonIndex].id,
+        );
+        return GetBuilder<ProductDesignCourseController>(
+          builder: (controller) {
+            final currentLesson = productDesignLessons[_currentLessonIndex];
+            final isPlaying = _videoController?.value.isPlaying ?? false;
 
-        return Scaffold(
+            return Scaffold(
           backgroundColor: AppColors.background,
           bottomNavigationBar: SafeArea(
             top: false,
@@ -214,16 +337,22 @@ class _ProductDesignPlayerScreenState extends State<ProductDesignPlayerScreen> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               child: Row(
                 children: [
-                  Container(
-                    width: 62,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFF1EE),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(
-                      Icons.star_border_rounded,
-                      color: AppColors.warmAccent,
+                  InkWell(
+                    onTap: () => _toggleLessonFavourite(catalogController),
+                    borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      width: 62,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF1EE),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        isFavourite
+                            ? Icons.star_rounded
+                            : Icons.star_border_rounded,
+                        color: AppColors.warmAccent,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -278,7 +407,7 @@ class _ProductDesignPlayerScreenState extends State<ProductDesignPlayerScreen> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${controller.lessonDurationLabel(_currentLessonIndex)} • $productDesignCourseTitle',
+                          '${controller.lessonDurationLabel(_currentLessonIndex)} | $productDesignCourseTitle',
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: Colors.white.withValues(alpha: 0.72),
                             fontWeight: FontWeight.w500,
@@ -433,6 +562,8 @@ class _ProductDesignPlayerScreenState extends State<ProductDesignPlayerScreen> {
               ),
             ],
           ),
+        );
+          },
         );
       },
     );

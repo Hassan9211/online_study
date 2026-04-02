@@ -18,6 +18,21 @@ class RemoteProfileRepository implements ProfileRepository {
   final LocalAuthSessionRepository _authStore;
 
   @override
+  Future<ProfileRecord> loadCachedProfile() {
+    return _localStore.loadProfile();
+  }
+
+  @override
+  Future<ProfileRecord> saveCachedProfile(ProfileRecord profile) {
+    return _localStore.saveProfile(profile);
+  }
+
+  @override
+  Future<void> clearCachedProfile() {
+    return _localStore.clearCachedProfile();
+  }
+
+  @override
   Future<ProfileRecord> loadProfile() async {
     final cachedProfile = await _localStore.loadProfile();
     if (!await _hasAccessToken()) {
@@ -28,6 +43,11 @@ class RemoteProfileRepository implements ProfileRepository {
       final body = await _apiClient.getJson(ApiEndpoints.user.me);
       final remoteProfile = _parseProfile(body, fallback: cachedProfile);
       return _localStore.saveProfile(remoteProfile);
+    } on ApiException catch (error) {
+      if (error.statusCode == 401) {
+        await _expireSession();
+      }
+      return cachedProfile;
     } catch (_) {
       return cachedProfile;
     }
@@ -58,6 +78,10 @@ class RemoteProfileRepository implements ProfileRepository {
         ),
       );
     } on ApiException catch (error) {
+      if (error.statusCode == 401) {
+        await _expireSession();
+        rethrow;
+      }
       if (!_shouldFallbackToLocal(error)) {
         rethrow;
       }
@@ -98,6 +122,10 @@ class RemoteProfileRepository implements ProfileRepository {
         ),
       );
     } on ApiException catch (error) {
+      if (error.statusCode == 401) {
+        await _expireSession();
+        rethrow;
+      }
       if (!_shouldFallbackToLocal(error)) {
         rethrow;
       }
@@ -109,6 +137,10 @@ class RemoteProfileRepository implements ProfileRepository {
   Future<bool> _hasAccessToken() async {
     final session = await _authStore.loadSession();
     return session.accessToken.trim().isNotEmpty;
+  }
+
+  Future<void> _expireSession() {
+    return _authStore.invalidateSession();
   }
 
   Future<dynamic> _submitProfileUpdate(Map<String, dynamic> payload) async {

@@ -3,7 +3,9 @@ import 'package:get/get.dart';
 
 import '../../../app/routes/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
+import '../controllers/home_dashboard_controller.dart';
 import '../controllers/profile_controller.dart';
+import '../models/home_dashboard_record.dart';
 import '../widgets/profile_avatar.dart';
 import 'account_screen.dart';
 import 'course_screen.dart';
@@ -69,89 +71,174 @@ class _HomeDashboardView extends StatelessWidget {
 
   final ThemeData theme;
 
+  Future<void> _refresh(HomeDashboardController homeController) async {
+    final refreshTasks = <Future<void>>[
+      homeController.refreshAll(),
+    ];
+    if (Get.isRegistered<ProfileController>()) {
+      refreshTasks.add(Get.find<ProfileController>().refreshProfile());
+    }
+    await Future.wait<void>(refreshTasks);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Container(
-          height: 245,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [AppColors.homeGradientStart, AppColors.homeGradientEnd],
+    return GetBuilder<HomeDashboardController>(
+      builder: (homeController) {
+        final dashboard = homeController.dashboard;
+
+        return Stack(
+          children: [
+            Container(
+              height: 245,
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    AppColors.homeGradientStart,
+                    AppColors.homeGradientEnd,
+                  ],
+                ),
+              ),
             ),
-          ),
-        ),
-        SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 120),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _HeaderSection(theme: theme),
-                const SizedBox(height: 22),
-                _StudyProgressCard(
-                  onTap: () => Get.toNamed(AppRoutes.myCourses),
-                ),
-                const SizedBox(height: 22),
-                Text(
-                  'What do you want to learn today?',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    color: AppColors.heading,
-                    fontWeight: FontWeight.w800,
+            SafeArea(
+              child: RefreshIndicator(
+                onRefresh: () => _refresh(homeController),
+                color: AppColors.primary,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: BouncingScrollPhysics(),
                   ),
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  height: 138,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: const [
-                      _LearningCard(
-                        title: 'Packaging Design',
-                        subtitle: '14 courses',
-                        backgroundColor: AppColors.homeCardSky,
-                        accentColor: AppColors.warmAccent,
-                        buttonLabel: 'Get Started',
-                        isLarge: true,
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 120),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _HeaderSection(theme: theme),
+                      const SizedBox(height: 22),
+                      _StudyProgressCard(
+                        learnedTodayLabel: dashboard.learnedTodayDisplayLabel,
+                        dailyGoalMinutes: dashboard.dailyGoalMinutes,
+                        progressValue: dashboard.learnedTodayProgress,
+                        onTap: () => Get.toNamed(AppRoutes.myCourses),
                       ),
-                      SizedBox(width: 14),
-                      _LearningCard(
-                        title: 'UI Design',
-                        subtitle: '8 courses',
-                        backgroundColor: AppColors.homeCardMint,
-                        accentColor: AppColors.primary,
+                      const SizedBox(height: 22),
+                      Text(
+                        'What do you want to learn today?',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: AppColors.heading,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
-                      SizedBox(width: 14),
-                      _LearningCard(
-                        title: 'Illustration',
-                        subtitle: '12 courses',
-                        backgroundColor: AppColors.homeCardLilac,
-                        accentColor: AppColors.heading,
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        height: 138,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: dashboard.learningCards.length,
+                          separatorBuilder: (_, _) => const SizedBox(width: 14),
+                          itemBuilder: (context, index) {
+                            final card = dashboard.learningCards[index];
+                            final palette = _learningCardPaletteFor(
+                              card.themeKey,
+                              index,
+                            );
+
+                            return _LearningCard(
+                              title: card.title,
+                              subtitle: card.subtitle,
+                              backgroundColor: palette.backgroundColor,
+                              accentColor: palette.accentColor,
+                              buttonLabel: card.buttonLabel,
+                              isLarge: index == 0,
+                            );
+                          },
+                        ),
                       ),
+                      const SizedBox(height: 22),
+                      Text(
+                        'Learning Plan',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: AppColors.heading,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      _LearningPlanCard(items: dashboard.learningPlan),
+                      const SizedBox(height: 18),
+                      _MeetupCard(
+                        title: dashboard.meetupTitle,
+                        subtitle: dashboard.meetupSubtitle,
+                      ),
+                      if (homeController.lastErrorMessage.isNotEmpty) ...[
+                        const SizedBox(height: 14),
+                        Text(
+                          homeController.lastErrorMessage,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: AppColors.mutedText,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
-                const SizedBox(height: 22),
-                Text(
-                  'Learning Plan',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    color: AppColors.heading,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                const _LearningPlanCard(),
-                const SizedBox(height: 18),
-                const _MeetupCard(),
-              ],
+              ),
             ),
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
+}
+
+class _LearningCardPalette {
+  const _LearningCardPalette({
+    required this.backgroundColor,
+    required this.accentColor,
+  });
+
+  final Color backgroundColor;
+  final Color accentColor;
+}
+
+_LearningCardPalette _learningCardPaletteFor(String themeKey, int index) {
+  final normalizedKey = themeKey.trim().toLowerCase();
+
+  if (normalizedKey.contains('mint') || normalizedKey.contains('green')) {
+    return const _LearningCardPalette(
+      backgroundColor: AppColors.homeCardMint,
+      accentColor: AppColors.primary,
+    );
+  }
+  if (normalizedKey.contains('lilac') ||
+      normalizedKey.contains('purple') ||
+      normalizedKey.contains('violet')) {
+    return const _LearningCardPalette(
+      backgroundColor: AppColors.homeCardLilac,
+      accentColor: AppColors.heading,
+    );
+  }
+  if (normalizedKey.contains('sky') || normalizedKey.contains('blue')) {
+    return const _LearningCardPalette(
+      backgroundColor: AppColors.homeCardSky,
+      accentColor: AppColors.warmAccent,
+    );
+  }
+
+  return switch (index % 3) {
+    1 => const _LearningCardPalette(
+        backgroundColor: AppColors.homeCardMint,
+        accentColor: AppColors.primary,
+      ),
+    2 => const _LearningCardPalette(
+        backgroundColor: AppColors.homeCardLilac,
+        accentColor: AppColors.heading,
+      ),
+    _ => const _LearningCardPalette(
+        backgroundColor: AppColors.homeCardSky,
+        accentColor: AppColors.warmAccent,
+      ),
+  };
 }
 
 class _HeaderSection extends StatelessWidget {
@@ -203,8 +290,16 @@ class _HeaderSection extends StatelessWidget {
 }
 
 class _StudyProgressCard extends StatelessWidget {
-  const _StudyProgressCard({required this.onTap});
+  const _StudyProgressCard({
+    required this.learnedTodayLabel,
+    required this.dailyGoalMinutes,
+    required this.progressValue,
+    required this.onTap,
+  });
 
+  final String learnedTodayLabel;
+  final int dailyGoalMinutes;
+  final double progressValue;
   final VoidCallback onTap;
 
   @override
@@ -252,16 +347,16 @@ class _StudyProgressCard extends StatelessWidget {
                               color: AppColors.heading,
                             ),
                             children: [
-                              const TextSpan(
-                                text: '46min',
-                                style: TextStyle(
+                              TextSpan(
+                                text: '${learnedTodayLabel}min',
+                                style: const TextStyle(
                                   fontSize: 30,
                                   fontWeight: FontWeight.w800,
                                   letterSpacing: -0.8,
                                 ),
                               ),
                               TextSpan(
-                                text: ' / 60min',
+                                text: ' / ${dailyGoalMinutes}min',
                                 style: TextStyle(
                                   color: AppColors.mutedText.withValues(
                                     alpha: 0.9,
@@ -299,7 +394,7 @@ class _StudyProgressCard extends StatelessWidget {
               ClipRRect(
                 borderRadius: BorderRadius.circular(999),
                 child: LinearProgressIndicator(
-                  value: 46 / 60,
+                  value: progressValue.clamp(0.0, 1.0),
                   minHeight: 6,
                   backgroundColor: AppColors.dividerSoft,
                   valueColor: const AlwaysStoppedAnimation<Color>(
@@ -482,7 +577,9 @@ class _CourseIllustration extends StatelessWidget {
 }
 
 class _LearningPlanCard extends StatelessWidget {
-  const _LearningPlanCard();
+  const _LearningPlanCard({required this.items});
+
+  final List<HomeLearningPlanRecord> items;
 
   @override
   Widget build(BuildContext context) {
@@ -499,19 +596,22 @@ class _LearningPlanCard extends StatelessWidget {
           ),
         ],
       ),
-      child: const Column(
-        children: [
-          _PlanRow(
-            title: 'Packaging Design',
-            progress: 40,
-            total: 48,
-            isDone: true,
-          ),
-          Divider(height: 24, color: AppColors.dividerSoft),
-          _PlanRow(title: 'Product Design', progress: 6, total: 24),
-          Divider(height: 24, color: AppColors.dividerSoft),
-          _PlanRow(title: 'Animation Basics', progress: 18, total: 24),
-        ],
+      child: Column(
+        children: List.generate(items.length, (index) {
+          final item = items[index];
+          return Column(
+            children: [
+              _PlanRow(
+                title: item.title,
+                progress: item.progress,
+                total: item.total,
+                isDone: item.isDone,
+              ),
+              if (index != items.length - 1)
+                const Divider(height: 24, color: AppColors.dividerSoft),
+            ],
+          );
+        }),
       ),
     );
   }
@@ -585,7 +685,10 @@ class _PlanRow extends StatelessWidget {
 }
 
 class _MeetupCard extends StatelessWidget {
-  const _MeetupCard();
+  const _MeetupCard({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
 
   @override
   Widget build(BuildContext context) {
@@ -606,7 +709,7 @@ class _MeetupCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Meetup',
+                  title,
                   style: theme.textTheme.headlineSmall?.copyWith(
                     color: const Color(0xFF5226A5),
                     fontWeight: FontWeight.w800,
@@ -615,7 +718,7 @@ class _MeetupCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Off-line exchange of learning experiences',
+                  subtitle,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: const Color(0xFF7B6A9E),
                     fontSize: 12,

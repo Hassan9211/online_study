@@ -49,6 +49,7 @@ class _SupportRequestScreenState extends State<SupportRequestScreen> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
   String _selectedTopic = _supportTopics.first;
+  bool _isSubmitting = false;
   bool _showValidation = false;
 
   @override
@@ -61,11 +62,11 @@ class _SupportRequestScreenState extends State<SupportRequestScreen> {
   String? _validateSubject(String? value) {
     final text = value?.trim() ?? '';
     if (text.isEmpty) {
-      return 'Subject required hai.';
+      return 'Subject is required.';
     }
 
     if (text.length < 4) {
-      return 'Subject thora detail me likhein.';
+      return 'Please add a little more detail to the subject.';
     }
 
     return null;
@@ -74,17 +75,21 @@ class _SupportRequestScreenState extends State<SupportRequestScreen> {
   String? _validateMessage(String? value) {
     final text = value?.trim() ?? '';
     if (text.isEmpty) {
-      return 'Message required hai.';
+      return 'Message is required.';
     }
 
     if (text.length < 10) {
-      return 'Issue ki detail thori aur likhein.';
+      return 'Please add a little more detail about the issue.';
     }
 
     return null;
   }
 
   Future<void> _submitRequest() async {
+    if (_isSubmitting) {
+      return;
+    }
+
     setState(() {
       _showValidation = true;
     });
@@ -93,6 +98,10 @@ class _SupportRequestScreenState extends State<SupportRequestScreen> {
     if (!isValid) {
       return;
     }
+
+    setState(() {
+      _isSubmitting = true;
+    });
 
     try {
       final request = await _supportRepository.submitRequest(
@@ -116,13 +125,17 @@ class _SupportRequestScreenState extends State<SupportRequestScreen> {
       Get.back();
       Get.snackbar(
         'Support Request Sent',
-        'Hamari team aap se jald contact karegi.',
+        'Our team will contact you soon.',
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.white,
         colorText: AppColors.heading,
         margin: const EdgeInsets.all(14),
       );
     } catch (error) {
+      if (!mounted) {
+        return;
+      }
+
       Get.snackbar(
         'Support Request Failed',
         error.toString(),
@@ -131,6 +144,12 @@ class _SupportRequestScreenState extends State<SupportRequestScreen> {
         colorText: AppColors.heading,
         margin: const EdgeInsets.all(14),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+        });
+      }
     }
   }
 
@@ -146,7 +165,8 @@ class _SupportRequestScreenState extends State<SupportRequestScreen> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
           child: AppPrimaryButton(
             label: 'Send Request',
-            onPressed: _submitRequest,
+            onPressed: _isSubmitting ? null : _submitRequest,
+            isLoading: _isSubmitting,
           ),
         ),
       ),

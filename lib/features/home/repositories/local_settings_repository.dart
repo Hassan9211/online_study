@@ -10,6 +10,9 @@ class LocalSettingsRepository implements SettingsRepository {
   static const String _privateProfileKey = 'settings_private_profile';
 
   @override
+  Future<AppSettingsRecord> loadCachedSettings() => loadSettings();
+
+  @override
   Future<AppSettingsRecord> loadSettings() async {
     final preferences = await SharedPreferences.getInstance();
     return AppSettingsRecord(
@@ -42,5 +45,14 @@ class LocalSettingsRepository implements SettingsRepository {
     );
     await preferences.setBool(_privateProfileKey, settings.privateProfile);
     return settings;
+  }
+
+  @override
+  Future<void> clearCachedSettings() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(_pushNotificationsKey);
+    await preferences.remove(_courseRemindersKey);
+    await preferences.remove(_wifiDownloadsOnlyKey);
+    await preferences.remove(_privateProfileKey);
   }
 }

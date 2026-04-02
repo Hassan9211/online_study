@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/payment_checkout_request.dart';
 import '../models/payment_method_record.dart';
 import '../models/product_design_purchase_record.dart';
 import 'product_design_purchase_repository.dart';
@@ -9,6 +12,10 @@ class LocalProductDesignPurchaseRepository
   static const String _isPurchasedKey = 'product_design_is_purchased';
   static const String _purchaseIdKey = 'product_design_purchase_id';
   static const String _purchasedAtKey = 'product_design_purchased_at';
+  static const String _paymentMethodsKey = 'product_design_payment_methods';
+
+  @override
+  Future<ProductDesignPurchaseRecord> loadCachedPurchase() => loadPurchase();
 
   @override
   Future<ProductDesignPurchaseRecord> loadPurchase() async {
@@ -42,29 +49,70 @@ class LocalProductDesignPurchaseRepository
   }
 
   @override
-  Future<List<PaymentMethodRecord>> loadPaymentMethods() async {
-    return const <PaymentMethodRecord>[
-      PaymentMethodRecord(
-        id: 'local_card_1',
-        label: 'My card',
-        maskedNumber: '**** **** **** 4829',
-      ),
-      PaymentMethodRecord(
-        id: 'local_card_2',
-        label: 'Work card',
-        maskedNumber: '**** **** **** 2641',
-      ),
-      PaymentMethodRecord(
-        id: 'local_card_3',
-        label: 'Family card',
-        maskedNumber: '**** **** **** 3156',
-      ),
-    ];
+  Future<void> clearCachedState() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(_isPurchasedKey);
+    await preferences.remove(_purchaseIdKey);
+    await preferences.remove(_purchasedAtKey);
+    await preferences.remove(_paymentMethodsKey);
   }
 
   @override
-  Future<String> createCheckout({required String paymentMethodId}) async {
-    return 'local_payment_${DateTime.now().millisecondsSinceEpoch}';
+  Future<List<PaymentMethodRecord>> loadPaymentMethods() async {
+    final preferences = await SharedPreferences.getInstance();
+    final rawMethods = preferences.getString(_paymentMethodsKey);
+    if (rawMethods == null || rawMethods.trim().isEmpty) {
+      return const <PaymentMethodRecord>[];
+    }
+
+    try {
+      final decoded = jsonDecode(rawMethods);
+      if (decoded is! List) {
+        return const <PaymentMethodRecord>[];
+      }
+
+      final methods = decoded.map((item) {
+        final map = Map<String, dynamic>.from(item as Map);
+        return PaymentMethodRecord(
+          id: (map['id'] ?? '').toString(),
+          label: (map['label'] ?? 'Card').toString(),
+          maskedNumber: (map['maskedNumber'] ?? '').toString(),
+        );
+      }).where((method) {
+        return method.id.trim().isNotEmpty && method.label.trim().isNotEmpty;
+      }).toList();
+
+      return methods;
+    } catch (_) {
+      return const <PaymentMethodRecord>[];
+    }
+  }
+
+  Future<void> savePaymentMethods(List<PaymentMethodRecord> methods) async {
+    if (methods.isEmpty) {
+      return;
+    }
+
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(
+      _paymentMethodsKey,
+      jsonEncode(
+        methods.map((method) {
+          return <String, dynamic>{
+            'id': method.id,
+            'label': method.label,
+            'maskedNumber': method.maskedNumber,
+          };
+        }).toList(),
+      ),
+    );
+  }
+
+  @override
+  Future<String> createCheckout({
+    required PaymentCheckoutRequest request,
+  }) async {
+    return 'local_${request.paymentMethodId}_${DateTime.now().millisecondsSinceEpoch}';
   }
 
   @override

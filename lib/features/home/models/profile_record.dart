@@ -9,12 +9,11 @@ class ProfileRecord {
     this.avatarUrl = '',
   });
 
-  static const String defaultId = 'local-user';
-  static const String defaultName = 'Kristin Watson';
-  static const String defaultEmail = 'kristin.watson@email.com';
-  static const String defaultPhone = '+92 300 1234567';
-  static const String defaultBio =
-      'Product designer who loves learning, prototyping, and clean UI.';
+  static const String defaultId = '';
+  static const String defaultName = '';
+  static const String defaultEmail = '';
+  static const String defaultPhone = '';
+  static const String defaultBio = '';
 
   const ProfileRecord.defaults()
       : id = defaultId,

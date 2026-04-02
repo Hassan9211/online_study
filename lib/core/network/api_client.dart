@@ -13,8 +13,19 @@ class ApiException implements Exception {
   final String message;
   final int? statusCode;
 
+  String get displayMessage {
+    final normalizedMessage = message.trim();
+    if (statusCode == null) {
+      return normalizedMessage;
+    }
+    if (normalizedMessage.isEmpty) {
+      return 'HTTP $statusCode';
+    }
+    return '$normalizedMessage (HTTP $statusCode)';
+  }
+
   @override
-  String toString() => message;
+  String toString() => displayMessage;
 }
 
 class ApiClient extends GetConnect {
@@ -114,7 +125,7 @@ class ApiClient extends GetConnect {
 
     if (response.statusCode == null) {
       throw const ApiException(
-        'Server tak reach nahi ho raha. API URL, phone/LAN connectivity, aur Android cleartext HTTP config check karein.',
+        'Unable to reach the server. Check the API URL, phone/LAN connectivity, and Android cleartext HTTP configuration.',
       );
     }
 
@@ -126,7 +137,7 @@ class ApiClient extends GetConnect {
     }
 
     throw ApiException(
-      'Request failed with status ${response.statusCode ?? 'unknown'}.',
+      'Request failed.',
       statusCode: response.statusCode,
     );
   }

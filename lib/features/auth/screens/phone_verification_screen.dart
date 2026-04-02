@@ -6,6 +6,8 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_buttons.dart';
 import '../controllers/auth_session_controller.dart';
 
+enum _VerificationChannel { email, phone }
+
 class PhoneVerificationScreen extends StatefulWidget {
   const PhoneVerificationScreen({super.key});
 
@@ -17,18 +19,37 @@ class PhoneVerificationScreen extends StatefulWidget {
 class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
   final AuthSessionController _authSessionController =
       Get.find<AuthSessionController>();
-  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _contactController = TextEditingController();
   final List<TextEditingController> _otpControllers = List.generate(
     4,
     (_) => TextEditingController(),
   );
 
+  late final _VerificationChannel _channel;
+  late final bool _contactReadOnly;
   int _stepIndex = 0;
   int _otpIndex = 0;
   bool _isSendingOtp = false;
   bool _isVerifyingOtp = false;
 
-  bool get _canContinueToOtp => _phoneController.text.trim().isNotEmpty;
+  bool get _isEmailFlow => _channel == _VerificationChannel.email;
+  bool get _canContinueToOtp => _contactController.text.trim().isNotEmpty;
+  String get _contactValue => _contactController.text.trim();
+  String get _pendingEmail => _authSessionController.pendingEmail.trim();
+  String get _requestEmail => _isEmailFlow ? _contactValue : _pendingEmail;
+  String get _requestPhone => _isEmailFlow ? '' : _contactValue;
+  String get _verificationTargetLabel {
+    final email = _requestEmail.trim();
+    final phone = _requestPhone.trim();
+
+    if (email.isNotEmpty && phone.isNotEmpty) {
+      return 'Email: $email\nPhone: $phone';
+    }
+    if (email.isNotEmpty) {
+      return email;
+    }
+    return phone;
+  }
 
   bool get _canVerifyOtp {
     return _otpControllers.every(
@@ -37,8 +58,33 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    final arguments = Get.arguments;
+    final requestedChannel = _readArgument(arguments, 'channel').toLowerCase();
+    final presetEmail = _readArgument(arguments, 'email').trim();
+    final presetPhone = _readArgument(arguments, 'phone').trim();
+    final pendingEmail = _authSessionController.pendingEmail.trim();
+    final pendingPhone = _authSessionController.pendingPhone.trim();
+    final resolvedEmail = presetEmail.isNotEmpty ? presetEmail : pendingEmail;
+    final resolvedPhone = presetPhone.isNotEmpty ? presetPhone : pendingPhone;
+
+    if (requestedChannel == 'phone' ||
+        (resolvedEmail.isEmpty && resolvedPhone.isNotEmpty)) {
+      _channel = _VerificationChannel.phone;
+      _contactReadOnly = false;
+      _contactController.text = resolvedPhone;
+      return;
+    }
+
+    _channel = _VerificationChannel.email;
+    _contactReadOnly = resolvedEmail.isNotEmpty;
+    _contactController.text = resolvedEmail;
+  }
+
+  @override
   void dispose() {
-    _phoneController.dispose();
+    _contactController.dispose();
     for (final controller in _otpControllers) {
       controller.dispose();
     }
@@ -46,9 +92,16 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
   }
 
   void _goBack() {
+    if (_isSendingOtp || _isVerifyingOtp) {
+      return;
+    }
+
     if (_stepIndex > 0) {
       setState(() {
         _stepIndex -= 1;
+        if (_stepIndex == 0) {
+          _resetOtpEntry();
+        }
       });
       return;
     }
@@ -65,7 +118,8 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
     });
 
     final didSendOtp = await _authSessionController.sendOtp(
-      phone: _phoneController.text,
+      email: _requestEmail,
+      phone: _requestPhone,
     );
 
     if (!mounted) {
@@ -75,6 +129,7 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
     setState(() {
       _isSendingOtp = false;
       if (didSendOtp) {
+        _resetOtpEntry();
         _stepIndex = 1;
       }
     });
@@ -83,7 +138,7 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
       Get.snackbar(
         'OTP Send Failed',
         _authSessionController.lastErrorMessage.isEmpty
-            ? 'Phone verification code send nahi ho saka.'
+            ? 'Could not send the verification code.'
             : _authSessionController.lastErrorMessage,
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.white,
@@ -104,7 +159,8 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
 
     final didCompleteRegistration =
         await _authSessionController.completeRegistration(
-          phone: _phoneController.text,
+          email: _requestEmail,
+          phone: _requestPhone,
           code: _otpControllers.map((controller) => controller.text).join(),
         );
 
@@ -123,7 +179,7 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
       Get.snackbar(
         'Verification Failed',
         _authSessionController.lastErrorMessage.isEmpty
-            ? 'OTP verify nahi ho saka.'
+            ? 'Could not verify the OTP.'
             : _authSessionController.lastErrorMessage,
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.white,
@@ -137,33 +193,33 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
     Get.offAllNamed(AppRoutes.home);
   }
 
-  void _appendPhoneDigit(String digit) {
-    if (digit.isEmpty) {
+  void _appendContactDigit(String digit) {
+    if (_isEmailFlow || digit.isEmpty || _isSendingOtp) {
       return;
     }
-    final newText = _phoneController.text + digit;
-    _phoneController.value = _phoneController.value.copyWith(
+    final newText = _contactController.text + digit;
+    _contactController.value = _contactController.value.copyWith(
       text: newText,
       selection: TextSelection.collapsed(offset: newText.length),
     );
   }
 
-  void _removePhoneDigit() {
-    if (_phoneController.text.isEmpty) {
+  void _removeContactDigit() {
+    if (_isEmailFlow || _contactController.text.isEmpty || _isSendingOtp) {
       return;
     }
-    final newText = _phoneController.text.substring(
+    final newText = _contactController.text.substring(
       0,
-      _phoneController.text.length - 1,
+      _contactController.text.length - 1,
     );
-    _phoneController.value = _phoneController.value.copyWith(
+    _contactController.value = _contactController.value.copyWith(
       text: newText,
       selection: TextSelection.collapsed(offset: newText.length),
     );
   }
 
   void _appendOtpDigit(String digit) {
-    if (digit.isEmpty || _otpIndex >= _otpControllers.length) {
+    if (digit.isEmpty || _otpIndex >= _otpControllers.length || _isVerifyingOtp) {
       return;
     }
     _otpControllers[_otpIndex].text = digit;
@@ -173,13 +229,30 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
   }
 
   void _removeOtpDigit() {
-    if (_otpIndex <= 0) {
+    if (_otpIndex <= 0 || _isVerifyingOtp) {
       return;
     }
     setState(() {
       _otpIndex -= 1;
       _otpControllers[_otpIndex].clear();
     });
+  }
+
+  void _resetOtpEntry() {
+    _otpIndex = 0;
+    for (final controller in _otpControllers) {
+      controller.clear();
+    }
+  }
+
+  String _readArgument(dynamic arguments, String key) {
+    if (arguments is Map) {
+      final value = arguments[key];
+      if (value != null) {
+        return value.toString();
+      }
+    }
+    return '';
   }
 
   @override
@@ -192,23 +265,31 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 220),
             child: _stepIndex == 0
-                ? _PhoneStep(
-                    key: const ValueKey('phone-step'),
+                ? _ContactStep(
+                    key: ValueKey(
+                      _isEmailFlow ? 'email-step' : 'phone-step',
+                    ),
                     onBack: _goBack,
-                    controller: _phoneController,
+                    controller: _contactController,
+                    isEmailFlow: _isEmailFlow,
+                    isReadOnly: _contactReadOnly,
                     onContinue:
                         _canContinueToOtp && !_isSendingOtp ? _goToOtp : null,
-                    onPhoneChanged: (_) => setState(() {}),
-                    onKeyTap: _appendPhoneDigit,
-                    onBackspace: _removePhoneDigit,
+                    isLoading: _isSendingOtp,
+                    onContactChanged: (_) => setState(() {}),
+                    onKeyTap: _appendContactDigit,
+                    onBackspace: _removeContactDigit,
                   )
                 : _stepIndex == 1
                 ? _OtpStep(
-                    key: const ValueKey('otp-step'),
+                    key: ValueKey(_isEmailFlow ? 'email-otp-step' : 'otp-step'),
                     onBack: _goBack,
+                    isEmailFlow: _isEmailFlow,
+                    verificationTargetLabel: _verificationTargetLabel,
                     otpControllers: _otpControllers,
                     onVerify:
                         _canVerifyOtp && !_isVerifyingOtp ? _goToSuccess : null,
+                    isLoading: _isVerifyingOtp,
                     onKeyTap: _appendOtpDigit,
                     onBackspace: _removeOtpDigit,
                   )
@@ -223,32 +304,45 @@ class _PhoneVerificationScreenState extends State<PhoneVerificationScreen> {
   }
 }
 
-class _PhoneStep extends StatelessWidget {
-  const _PhoneStep({
+class _ContactStep extends StatelessWidget {
+  const _ContactStep({
     super.key,
     required this.onBack,
     required this.controller,
+    required this.isEmailFlow,
+    required this.isReadOnly,
     required this.onContinue,
-    required this.onPhoneChanged,
+    required this.isLoading,
+    required this.onContactChanged,
     required this.onKeyTap,
     required this.onBackspace,
   });
 
   final VoidCallback onBack;
   final TextEditingController controller;
+  final bool isEmailFlow;
+  final bool isReadOnly;
   final VoidCallback? onContinue;
-  final ValueChanged<String> onPhoneChanged;
+  final bool isLoading;
+  final ValueChanged<String> onContactChanged;
   final ValueChanged<String> onKeyTap;
   final VoidCallback onBackspace;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final title = isEmailFlow ? 'Verify Email' : 'Continue with Phone';
+    final subtitle = isEmailFlow
+        ? 'We will send a 4-digit OTP to your email address.'
+        : 'Enter your phone number to continue. We will use your verification details to send the OTP.';
+    final hintText = isEmailFlow ? 'Email address' : 'Phone number';
+    final icon = isEmailFlow ? Icons.mark_email_read_outlined : Icons.phone_iphone;
+
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _StepHeader(title: 'Continue with Phone', onBack: onBack),
+          _StepHeader(title: title, onBack: onBack),
           const SizedBox(height: 28),
           Center(
             child: Container(
@@ -262,7 +356,7 @@ class _PhoneStep extends StatelessWidget {
                 alignment: Alignment.center,
                 children: [
                   Icon(
-                    Icons.phone_iphone,
+                    icon,
                     size: 54,
                     color: AppColors.primary.withValues(alpha: 0.9),
                   ),
@@ -285,7 +379,8 @@ class _PhoneStep extends StatelessWidget {
           const SizedBox(height: 22),
           Center(
             child: Text(
-              'Enter your phone number',
+              subtitle,
+              textAlign: TextAlign.center,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: AppColors.mutedText,
                 fontSize: 13,
@@ -293,52 +388,75 @@ class _PhoneStep extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: controller,
-                  onChanged: onPhoneChanged,
-                  keyboardType: TextInputType.phone,
-                  style: theme.textTheme.bodyLarge?.copyWith(
-                    color: AppColors.inputText,
-                    fontSize: 14,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final shouldStackFields = constraints.maxWidth < 340;
+              final contactField = TextField(
+                controller: controller,
+                onChanged: onContactChanged,
+                readOnly: isReadOnly,
+                keyboardType: isEmailFlow
+                    ? TextInputType.emailAddress
+                    : TextInputType.phone,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: AppColors.inputText,
+                  fontSize: 14,
+                ),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: hintText,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 14,
                   ),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    hintText: 'Phone number',
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 14,
+                  filled: true,
+                  fillColor: Colors.white,
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: AppColors.inputBorder,
                     ),
-                    filled: true,
-                    fillColor: Colors.white,
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(
-                        color: AppColors.inputBorder,
-                      ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: AppColors.primary),
-                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(color: AppColors.primary),
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
-              SizedBox(
-                width: 128,
+              );
+              final continueButton = SizedBox(
+                width: shouldStackFields ? double.infinity : 128,
                 height: 46,
                 child: AppPrimaryButton(
                   label: 'Continue',
                   onPressed: onContinue,
+                  isLoading: isLoading,
                 ),
-              ),
-            ],
+              );
+
+              if (shouldStackFields) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    contactField,
+                    const SizedBox(height: 10),
+                    continueButton,
+                  ],
+                );
+              }
+
+              return Row(
+                children: [
+                  Expanded(child: contactField),
+                  const SizedBox(width: 10),
+                  continueButton,
+                ],
+              );
+            },
           ),
-          const SizedBox(height: 24),
-          _NumericKeypad(onKeyTap: onKeyTap, onBackspace: onBackspace),
+          if (!isEmailFlow) ...[
+            const SizedBox(height: 24),
+            _NumericKeypad(onKeyTap: onKeyTap, onBackspace: onBackspace),
+          ],
         ],
       ),
     );
@@ -349,15 +467,21 @@ class _OtpStep extends StatelessWidget {
   const _OtpStep({
     super.key,
     required this.onBack,
+    required this.isEmailFlow,
+    required this.verificationTargetLabel,
     required this.otpControllers,
     required this.onVerify,
+    required this.isLoading,
     required this.onKeyTap,
     required this.onBackspace,
   });
 
   final VoidCallback onBack;
+  final bool isEmailFlow;
+  final String verificationTargetLabel;
   final List<TextEditingController> otpControllers;
   final VoidCallback? onVerify;
+  final bool isLoading;
   final ValueChanged<String> onKeyTap;
   final VoidCallback onBackspace;
 
@@ -368,13 +492,38 @@ class _OtpStep extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _StepHeader(title: 'Verify Phone', onBack: onBack, closeIcon: true),
+          _StepHeader(
+            title: isEmailFlow ? 'Enter Email OTP' : 'Enter OTP',
+            onBack: onBack,
+            closeIcon: true,
+          ),
           const SizedBox(height: 26),
           Text(
-            'Code is sent to your phone number',
+            isEmailFlow
+                ? 'Enter the 4-digit code sent to your email.'
+                : 'Enter the 4-digit code sent to your verification contact.',
             style: theme.textTheme.bodyMedium?.copyWith(
               color: AppColors.mutedText,
               fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.inputBorder),
+            ),
+            child: Text(
+              verificationTargetLabel,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: AppColors.heading,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -417,8 +566,9 @@ class _OtpStep extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: AppPrimaryButton(
-              label: 'Verify and Create Account',
+              label: 'Verify and Continue',
               onPressed: onVerify,
+              isLoading: isLoading,
             ),
           ),
           const SizedBox(height: 22),
@@ -474,7 +624,7 @@ class _SuccessStep extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'Congratulations, you have completed your registration!',
+              'Your OTP has been verified and your session is ready.',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: AppColors.mutedText,
@@ -521,11 +671,14 @@ class _StepHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 10),
-        Text(
-          title,
-          style: theme.textTheme.titleMedium?.copyWith(
-            color: AppColors.heading,
-            fontWeight: FontWeight.w700,
+        Expanded(
+          child: Text(
+            title,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: AppColors.heading,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ],

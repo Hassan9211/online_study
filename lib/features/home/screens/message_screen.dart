@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../../core/theme/app_colors.dart';
-import '../../../core/widgets/app_buttons.dart';
 import '../controllers/message_center_controller.dart';
 
 enum _InboxTab { message, notification }
@@ -35,15 +34,11 @@ class _MessageScreenState extends State<MessageScreen> {
       Get.to(() => const AiGuestChatScreen());
       return;
     }
+    Get.to(() => ConversationChatScreen(conversation: conversation));
+  }
 
-    Get.snackbar(
-      conversation.name,
-      'Is conversation ko hum next step me full chat me bhi open kar sakte hain.',
-      snackPosition: SnackPosition.BOTTOM,
-      backgroundColor: Colors.white,
-      colorText: AppColors.heading,
-      margin: const EdgeInsets.all(14),
-    );
+  Future<void> _refreshInbox() async {
+    await _messageCenterController.refreshState();
   }
 
   @override
@@ -92,46 +87,55 @@ class _MessageScreenState extends State<MessageScreen> {
                 ),
                 const SizedBox(height: 12),
                 Expanded(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 220),
-                    child: _selectedTab == _InboxTab.message
-                        ? ListView.builder(
-                            key: const ValueKey('message-list'),
-                            padding: const EdgeInsets.fromLTRB(10, 4, 10, 112),
-                            itemCount: controller.conversations.length,
-                            itemBuilder: (context, index) {
-                              final conversation =
-                                  controller.conversations[index];
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 14),
-                                child: _ConversationCard(
-                                  conversation: conversation,
-                                  timeLabel: controller.conversationTimeLabel(
-                                    conversation.timestamp,
+                  child: RefreshIndicator(
+                    onRefresh: _refreshInbox,
+                    color: AppColors.primary,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      child: _selectedTab == _InboxTab.message
+                          ? ListView.builder(
+                              key: const ValueKey('message-list'),
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.fromLTRB(10, 4, 10, 112),
+                              itemCount: controller.conversations.length,
+                              itemBuilder: (context, index) {
+                                final conversation =
+                                    controller.conversations[index];
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 14),
+                                  child: _ConversationCard(
+                                    conversation: conversation,
+                                    timeLabel: controller.conversationTimeLabel(
+                                      conversation.timestamp,
+                                    ),
+                                    onTap: () => _openConversation(conversation),
                                   ),
-                                  onTap: () => _openConversation(conversation),
-                                ),
-                              );
-                            },
-                          )
-                        : ListView.builder(
-                            key: const ValueKey('notification-list'),
-                            padding: const EdgeInsets.fromLTRB(10, 4, 10, 112),
-                            itemCount: controller.notifications.length,
-                            itemBuilder: (context, index) {
-                              final notification =
-                                  controller.notifications[index];
-                              return Padding(
-                                padding: const EdgeInsets.only(bottom: 14),
-                                child: _NotificationCard(
-                                  notification: notification,
-                                  timeLabel: controller.notificationTimeLabel(
-                                    notification.timestamp,
+                                );
+                              },
+                            )
+                          : ListView.builder(
+                              key: const ValueKey('notification-list'),
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.fromLTRB(10, 4, 10, 112),
+                              itemCount: controller.notifications.length,
+                              itemBuilder: (context, index) {
+                                final notification =
+                                    controller.notifications[index];
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 14),
+                                  child: _NotificationCard(
+                                    notification: notification,
+                                    timeLabel: controller.notificationTimeLabel(
+                                      notification.timestamp,
+                                    ),
+                                    onTap: () => controller.markNotificationRead(
+                                      notification.id,
+                                    ),
                                   ),
-                                ),
-                              );
-                            },
-                          ),
+                                );
+                              },
+                            ),
+                    ),
                   ),
                 ),
               ],
@@ -151,16 +155,38 @@ class AiGuestChatScreen extends StatefulWidget {
 }
 
 class _AiGuestChatScreenState extends State<AiGuestChatScreen> {
+  static const List<String> _aiGuestPromptSuggestions = <String>[
+    'How do I buy the Product Design course?',
+    'Why is my lesson still locked?',
+    'How do I update my profile photo?',
+    'How can I change my password?',
+    'Where can I see my purchased courses?',
+    'How do notifications work in this app?',
+    'How do I contact support?',
+    'How can I continue a lesson where I left off?',
+  ];
+
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _messageFocusNode = FocusNode();
+  String _draftText = '';
 
   MessageCenterController get _messageCenterController =>
       Get.find<MessageCenterController>();
 
   @override
+  void initState() {
+    super.initState();
+    _messageFocusNode.addListener(_handleFocusChange);
+  }
+
+  @override
   void dispose() {
     _messageController.dispose();
     _scrollController.dispose();
+    _messageFocusNode
+      ..removeListener(_handleFocusChange)
+      ..dispose();
     super.dispose();
   }
 
@@ -176,6 +202,47 @@ class _AiGuestChatScreenState extends State<AiGuestChatScreen> {
     );
   }
 
+  void _handleFocusChange() {
+    if (_messageFocusNode.hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    }
+    setState(() {});
+  }
+
+  void _updateDraft(String value) {
+    setState(() {
+      _draftText = value;
+    });
+  }
+
+  void _applySuggestion(String suggestion) {
+    _messageController.value = TextEditingValue(
+      text: suggestion,
+      selection: TextSelection.collapsed(offset: suggestion.length),
+    );
+    _messageFocusNode.requestFocus();
+    _updateDraft(suggestion);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  List<String> get _filteredSuggestions {
+    final query = _draftText.trim().toLowerCase();
+    if (query.isEmpty) {
+      return _aiGuestPromptSuggestions.take(4).toList();
+    }
+
+    final filtered = _aiGuestPromptSuggestions.where((suggestion) {
+      return suggestion.toLowerCase().contains(query);
+    }).toList();
+
+    return (filtered.isEmpty ? _aiGuestPromptSuggestions : filtered)
+        .take(5)
+        .toList();
+  }
+
+  bool get _showSuggestions =>
+      _messageFocusNode.hasFocus || _draftText.trim().isNotEmpty;
+
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) {
@@ -183,6 +250,7 @@ class _AiGuestChatScreenState extends State<AiGuestChatScreen> {
     }
 
     _messageController.clear();
+    _updateDraft('');
     await _messageCenterController.sendAiGuestMessage(text);
     if (!mounted) {
       return;
@@ -197,40 +265,74 @@ class _AiGuestChatScreenState extends State<AiGuestChatScreen> {
 
     return Scaffold(
       backgroundColor: Colors.white,
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _messageController,
-                  textInputAction: TextInputAction.send,
-                  onSubmitted: (_) => _sendMessage(),
-                  decoration: InputDecoration(
-                    hintText: 'Ask AI Guest anything...',
-                    filled: true,
-                    fillColor: const Color(0xFFF5F6FC),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(18),
-                      borderSide: BorderSide.none,
+      resizeToAvoidBottomInset: true,
+      bottomNavigationBar: GetBuilder<MessageCenterController>(
+        builder: (controller) {
+          final viewInsetsBottom = MediaQuery.of(context).viewInsets.bottom;
+          final canSend =
+              _messageController.text.trim().isNotEmpty &&
+              !controller.isAiGuestTyping;
+
+          return AnimatedPadding(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            padding: EdgeInsets.only(bottom: viewInsetsBottom),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_showSuggestions && _filteredSuggestions.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+                      child: _AiSuggestionPanel(
+                        suggestions: _filteredSuggestions,
+                        onSelect: _applySuggestion,
+                      ),
                     ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _messageController,
+                            focusNode: _messageFocusNode,
+                            textInputAction: TextInputAction.send,
+                            minLines: 1,
+                            maxLines: 4,
+                            onTap: _scrollToBottom,
+                            onChanged: _updateDraft,
+                            onSubmitted: (_) => _sendMessage(),
+                            decoration: InputDecoration(
+                              hintText: 'Ask AI Guest anything...',
+                              filled: true,
+                              fillColor: const Color(0xFFF5F6FC),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(18),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 14,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        _AiSendButton(
+                          enabled: canSend,
+                          onTap: _sendMessage,
+                        ),
+                      ],
                     ),
                   ),
-                ),
+                ],
               ),
-              const SizedBox(width: 10),
-              SizedBox(
-                width: 64,
-                child: AppPrimaryButton(label: 'Send', onPressed: _sendMessage),
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
       body: SafeArea(
         child: GetBuilder<MessageCenterController>(
@@ -312,6 +414,238 @@ class _AiGuestChatScreenState extends State<AiGuestChatScreen> {
                       );
                     },
                   ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class ConversationChatScreen extends StatefulWidget {
+  const ConversationChatScreen({
+    super.key,
+    required this.conversation,
+  });
+
+  final MessageConversation conversation;
+
+  @override
+  State<ConversationChatScreen> createState() => _ConversationChatScreenState();
+}
+
+class _ConversationChatScreenState extends State<ConversationChatScreen> {
+  final TextEditingController _messageController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  final FocusNode _messageFocusNode = FocusNode();
+
+  MessageCenterController get _messageCenterController =>
+      Get.find<MessageCenterController>();
+
+  @override
+  void initState() {
+    super.initState();
+    _messageCenterController.loadConversationMessages(widget.conversation.id);
+    _messageFocusNode.addListener(_handleFocusChange);
+  }
+
+  @override
+  void dispose() {
+    _messageController.dispose();
+    _scrollController.dispose();
+    _messageFocusNode
+      ..removeListener(_handleFocusChange)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange() {
+    if (_messageFocusNode.hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+    }
+    setState(() {});
+  }
+
+  void _scrollToBottom() {
+    if (!_scrollController.hasClients) {
+      return;
+    }
+
+    _scrollController.animateTo(
+      _scrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
+  Future<void> _sendMessage() async {
+    final text = _messageController.text.trim();
+    if (text.isEmpty) {
+      return;
+    }
+
+    _messageController.clear();
+    await _messageCenterController.sendConversationMessage(
+      widget.conversation,
+      text,
+    );
+    if (!mounted) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      resizeToAvoidBottomInset: true,
+      bottomNavigationBar: GetBuilder<MessageCenterController>(
+        builder: (controller) {
+          final viewInsetsBottom = MediaQuery.of(context).viewInsets.bottom;
+          final canSend =
+              _messageController.text.trim().isNotEmpty &&
+              !controller.isConversationSending(widget.conversation.id);
+
+          return AnimatedPadding(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOut,
+            padding: EdgeInsets.only(bottom: viewInsetsBottom),
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 8, 14, 14),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _messageController,
+                        focusNode: _messageFocusNode,
+                        textInputAction: TextInputAction.send,
+                        minLines: 1,
+                        maxLines: 4,
+                        onTap: _scrollToBottom,
+                        onChanged: (_) => setState(() {}),
+                        onSubmitted: (_) => _sendMessage(),
+                        decoration: InputDecoration(
+                          hintText: 'Type your message...',
+                          filled: true,
+                          fillColor: const Color(0xFFF5F6FC),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(18),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    _AiSendButton(
+                      enabled: canSend,
+                      onTap: _sendMessage,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+      body: SafeArea(
+        child: GetBuilder<MessageCenterController>(
+          builder: (controller) {
+            final messages = controller.messagesForConversation(
+              widget.conversation.id,
+            );
+            final isLoading = controller.isConversationLoading(
+              widget.conversation.id,
+            );
+
+            WidgetsBinding.instance.addPostFrameCallback(
+              (_) => _scrollToBottom(),
+            );
+
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
+                  child: Row(
+                    children: [
+                      InkWell(
+                        onTap: Get.back,
+                        borderRadius: BorderRadius.circular(16),
+                        child: const Padding(
+                          padding: EdgeInsets.all(4),
+                          child: Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: AppColors.heading,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      _ConversationAvatar(
+                        accentColor: widget.conversation.accentColor,
+                        icon: Icons.person_rounded,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              widget.conversation.name,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                color: AppColors.heading,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            Text(
+                              controller.isConversationSending(
+                                widget.conversation.id,
+                              )
+                                  ? 'Sending...'
+                                  : widget.conversation.status,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: widget.conversation.isOnline
+                                    ? AppColors.primary
+                                    : AppColors.mutedText,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: isLoading && messages.isEmpty
+                      ? const Center(
+                          child: CircularProgressIndicator(
+                            color: AppColors.primary,
+                          ),
+                        )
+                      : ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.fromLTRB(14, 8, 14, 24),
+                          itemCount: messages.length,
+                          itemBuilder: (context, index) {
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: _ChatBubble(message: messages[index]),
+                            );
+                          },
+                        ),
                 ),
               ],
             );
@@ -496,10 +830,12 @@ class _NotificationCard extends StatelessWidget {
   const _NotificationCard({
     required this.notification,
     required this.timeLabel,
+    required this.onTap,
   });
 
   final AppNotificationItem notification;
   final String timeLabel;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -521,73 +857,86 @@ class _NotificationCard extends StatelessWidget {
       NotificationType.security => const Color(0xFFE15A5A),
     };
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.heading.withValues(alpha: 0.06),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.heading.withValues(alpha: 0.06),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(iconData, color: iconColor),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  notification.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    color: AppColors.heading,
-                    fontWeight: FontWeight.w700,
-                  ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: iconColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                const SizedBox(height: 5),
-                Text(
-                  notification.message,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppColors.mutedText,
-                    height: 1.45,
-                  ),
-                ),
-                const SizedBox(height: 7),
-                Row(
+                child: Icon(iconData, color: iconColor),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.circle, size: 8, color: Color(0xFFD5D7E9)),
-                    const SizedBox(width: 6),
                     Text(
-                      timeLabel,
+                      notification.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: AppColors.heading,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      notification.message,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: AppColors.mutedText,
-                        fontWeight: FontWeight.w600,
+                        height: 1.45,
                       ),
+                    ),
+                    const SizedBox(height: 7),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.circle,
+                          size: 8,
+                          color: notification.isRead
+                              ? const Color(0xFFD5D7E9)
+                              : AppColors.warmAccent,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          timeLabel,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: AppColors.mutedText,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -609,6 +958,116 @@ class _ConversationAvatar extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
       ),
       child: Icon(icon, color: AppColors.primary),
+    );
+  }
+}
+
+class _AiSuggestionPanel extends StatelessWidget {
+  const _AiSuggestionPanel({
+    required this.suggestions,
+    required this.onSelect,
+  });
+
+  final List<String> suggestions;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF6F7FD),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Smart suggestions',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: AppColors.mutedText,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: suggestions.map((suggestion) {
+              return _AiSuggestionChip(
+                label: suggestion,
+                onTap: () => onSelect(suggestion),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AiSuggestionChip extends StatelessWidget {
+  const _AiSuggestionChip({
+    required this.label,
+    required this.onTap,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: AppColors.inputBorder,
+          ),
+        ),
+        child: Text(
+          label,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: AppColors.heading,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AiSendButton extends StatelessWidget {
+  const _AiSendButton({
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: enabled ? AppColors.primary : AppColors.inputBorder,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(18),
+        child: SizedBox(
+          width: 52,
+          height: 52,
+          child: Icon(
+            Icons.arrow_upward_rounded,
+            color: enabled ? Colors.white : AppColors.mutedText,
+          ),
+        ),
+      ),
     );
   }
 }

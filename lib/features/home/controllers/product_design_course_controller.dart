@@ -3,7 +3,8 @@ import 'dart:async';
 import 'package:get/get.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../../core/network/api_endpoints.dart';
+import 'home_dashboard_controller.dart';
+import '../models/payment_checkout_request.dart';
 import '../models/payment_method_record.dart';
 import '../models/product_design_course_data.dart';
 import '../models/product_design_purchase_record.dart';
@@ -52,8 +53,14 @@ class ProductDesignCourseController extends GetxController {
   @override
   void onInit() {
     super.onInit();
-    _loadPurchase();
-    _preloadLessonDurations();
+    unawaited(_bootstrap());
+    unawaited(_preloadLessonDurations());
+  }
+
+  Future<void> _bootstrap() async {
+    _purchaseRecord = await _purchaseRepository.loadCachedPurchase();
+    update();
+    await _loadPurchase();
   }
 
   bool isLessonLocked(int index) {
@@ -90,7 +97,20 @@ class ProductDesignCourseController extends GetxController {
 
   Future<void> reset() async {
     _purchaseRecord = const ProductDesignPurchaseRecord.empty();
+    update();
     await _purchaseRepository.savePurchase(_purchaseRecord);
+    if (Get.isRegistered<HomeDashboardController>()) {
+      unawaited(Get.find<HomeDashboardController>().refreshAll());
+    }
+  }
+
+  Future<void> resetForSignedOutUser() async {
+    _purchaseRecord = const ProductDesignPurchaseRecord.empty();
+    _paymentMethods = const <PaymentMethodRecord>[];
+    _pendingPaymentId = '';
+    _isLoadingPaymentMethods = false;
+    _lastErrorMessage = '';
+    await _purchaseRepository.clearCachedState();
     update();
   }
 
@@ -115,31 +135,42 @@ class ProductDesignCourseController extends GetxController {
       if (methods.isNotEmpty) {
         _paymentMethods = methods;
       } else {
+        _paymentMethods = _fallbackPaymentMethods;
         _lastErrorMessage =
-            'GET /payments/methods chal gayi, lekin backend ne koi methods return nahi ki.';
+            'Live payment methods are unavailable right now. Showing saved cards for now.';
       }
     } on TimeoutException {
+      if (_paymentMethods.isEmpty) {
+        _paymentMethods = _fallbackPaymentMethods;
+      }
       _lastErrorMessage =
-          'Payment methods load hone me delay aa rahi hai. Aap retry kar sakte hain.';
-      if (ApiConfig.useMockPaymentMethods && _paymentMethods.isEmpty) {
-        _paymentMethods = _fallbackPaymentMethods;
-      }
+          'Payment methods are taking longer than expected to load. Showing saved cards for now.';
     } catch (error) {
-      _lastErrorMessage = error.toString();
-      if (ApiConfig.useMockPaymentMethods && _paymentMethods.isEmpty) {
+      final authError = _isAuthError(error);
+      if (authError) {
+        _paymentMethods = const <PaymentMethodRecord>[];
+      }
+      if (_paymentMethods.isEmpty && !authError) {
         _paymentMethods = _fallbackPaymentMethods;
       }
+      _lastErrorMessage = authError
+          ? (error.toString().trim().isEmpty
+                ? 'Your session has expired. Please log in again to continue with checkout.'
+                : error.toString())
+          : (error.toString().trim().isEmpty
+                ? 'Could not load live payment methods. Showing saved cards for now.'
+                : '${error.toString()} Showing saved cards for now.');
     } finally {
       _isLoadingPaymentMethods = false;
       update();
     }
   }
 
-  Future<bool> startCheckout({required String paymentMethodId}) async {
+  Future<bool> startCheckout({required PaymentCheckoutRequest request}) async {
     _lastErrorMessage = '';
     try {
       _pendingPaymentId = await _purchaseRepository.createCheckout(
-        paymentMethodId: paymentMethodId,
+        request: request,
       );
       update();
       return true;
@@ -164,6 +195,9 @@ class ProductDesignCourseController extends GetxController {
       );
       _pendingPaymentId = '';
       update();
+      if (Get.isRegistered<HomeDashboardController>()) {
+        unawaited(Get.find<HomeDashboardController>().refreshAll());
+      }
       return true;
     } catch (error) {
       _lastErrorMessage = error.toString();
@@ -205,6 +239,14 @@ class ProductDesignCourseController extends GetxController {
 
     _isLoadingDurations = false;
     update();
+  }
+
+  bool _isAuthError(Object error) {
+    final message = error.toString().trim().toLowerCase();
+    return message.contains('unauthenticated') ||
+        message.contains('session has expired') ||
+        message.contains('log in again') ||
+        message.contains('token is missing');
   }
 }
 

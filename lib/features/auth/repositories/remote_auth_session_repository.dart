@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../../../core/network/api_client.dart';
 import '../../../core/network/api_endpoints.dart';
 import '../../../core/network/api_parsing.dart';
@@ -20,26 +22,55 @@ class RemoteAuthSessionRepository implements AuthSessionRepository {
   }
 
   @override
-  Future<void> sendOtp({required String phone}) async {
-    await _apiClient.postJson(
+  Future<void> sendOtp({String email = '', String phone = ''}) async {
+    final normalizedEmail = email.trim();
+    final normalizedPhone = phone.trim();
+    if (normalizedEmail.isEmpty && normalizedPhone.isEmpty) {
+      throw const ApiException('Email or phone is required.');
+    }
+
+    final body = await _apiClient.postJson(
       ApiEndpoints.auth.sendOtp,
       body: <String, dynamic>{
-        'phone': phone,
-        'phone_number': phone,
+        if (normalizedEmail.isNotEmpty) 'email': normalizedEmail,
+        if (normalizedPhone.isNotEmpty) 'phone': normalizedPhone,
       },
     );
+    _logAuthDebug('OTP send response -> $body');
   }
 
   @override
-  Future<void> verifyOtp({required String phone, required String code}) async {
-    await _apiClient.postJson(
+  Future<AuthSessionRecord?> verifyOtp({
+    String email = '',
+    String phone = '',
+    required String code,
+    String fallbackEmail = '',
+    String fallbackPassword = '',
+  }) async {
+    final normalizedEmail = email.trim();
+    final normalizedPhone = phone.trim();
+    if (normalizedEmail.isEmpty && normalizedPhone.isEmpty) {
+      throw const ApiException('Email or phone is required.');
+    }
+
+    final body = await _apiClient.postJson(
       ApiEndpoints.auth.verifyOtp,
       body: <String, dynamic>{
-        'phone': phone,
-        'phone_number': phone,
-        'otp': code,
+        if (normalizedEmail.isNotEmpty) 'email': normalizedEmail,
+        if (normalizedPhone.isNotEmpty) 'phone': normalizedPhone,
         'code': code,
+        'otp': code,
+        'otp_code': code,
+        'otpCode': code,
+        'verification_code': code,
       },
+    );
+    _logAuthDebug('OTP verify response -> $body');
+
+    return _tryParseVerifiedSession(
+      body,
+      fallbackEmail: fallbackEmail.isEmpty ? normalizedEmail : fallbackEmail,
+      fallbackPassword: fallbackPassword,
     );
   }
 
@@ -56,16 +87,11 @@ class RemoteAuthSessionRepository implements AuthSessionRepository {
       ApiEndpoints.auth.signUp,
       body: <String, dynamic>{
         'name': displayName,
-        'full_name': displayName,
         'email': email,
         'password': password,
         'password_confirmation': password,
-        'confirm_password': password,
         'phone': phone,
-        'phone_number': phone,
         'terms_accepted': termsAccepted,
-        'termsAccepted': termsAccepted,
-        'terms': termsAccepted,
       },
     );
 
@@ -117,8 +143,6 @@ class RemoteAuthSessionRepository implements AuthSessionRepository {
         'current_password': currentPassword,
         'new_password': newPassword,
         'new_password_confirmation': newPassword,
-        'password': newPassword,
-        'password_confirmation': newPassword,
       },
     );
     final updatedSession = session.copyWith(password: newPassword.trim());
@@ -131,7 +155,7 @@ class RemoteAuthSessionRepository implements AuthSessionRepository {
     await _postJsonWithFallbacks(
       <String>[
         ApiEndpoints.auth.forgotPassword,
-        '/forgot-password',
+        ApiEndpoints.auth.forgotPasswordCompat,
       ],
       body: <String, dynamic>{'email': email},
     );
@@ -140,18 +164,18 @@ class RemoteAuthSessionRepository implements AuthSessionRepository {
   @override
   Future<void> resetPassword({
     required String email,
-    required String token,
+    required String code,
     required String newPassword,
   }) async {
     await _postJsonWithFallbacks(
       <String>[
         ApiEndpoints.auth.resetPassword,
-        '/reset-password',
+        ApiEndpoints.auth.resetPasswordCompat,
       ],
       body: <String, dynamic>{
         'email': email,
-        'token': token,
-        'otp': token,
+        'code': code,
+        'token': code,
         'password': newPassword,
         'password_confirmation': newPassword,
       },
@@ -185,7 +209,9 @@ class RemoteAuthSessionRepository implements AuthSessionRepository {
       throw lastNotFound;
     }
 
-    throw const ApiException('Forgot password request complete nahi ho saki.');
+    throw const ApiException(
+      'The request could not be completed.',
+    );
   }
 
   @override
@@ -202,48 +228,33 @@ class RemoteAuthSessionRepository implements AuthSessionRepository {
     required String fallbackPassword,
   }) {
     final root = asMap(body);
-    final payload = root.containsKey('user') || root.containsKey('session')
-        ? root
-        : asMap(unwrapBody(body, keys: const ['data', 'result']));
-    final user = readMap(payload, const ['user', 'account', 'profile']);
-    final session = readMap(payload, const ['session', 'tokens', 'token']);
+    final payload = asMap(unwrapBody(body));
+    final source = payload.isEmpty ? root : payload;
+    final user = readMap(source, const ['user']);
+    final session = readMap(source, const ['session']);
 
     final accessToken = readString(
       session,
-      const [
-        'accessToken',
-        'access_token',
-        'token',
-        'plainTextToken',
-        'plain_text_token',
-        'bearer_token',
-      ],
+      const ['accessToken', 'access_token', 'token'],
       fallback: readString(
-        payload,
-        const [
-          'accessToken',
-          'access_token',
-          'token',
-          'plainTextToken',
-          'plain_text_token',
-          'bearer_token',
-        ],
+        source,
+        const ['accessToken', 'access_token', 'token'],
       ),
     );
     final refreshToken = readString(
       session,
       const ['refreshToken', 'refresh_token'],
-      fallback: readString(payload, const ['refreshToken', 'refresh_token']),
+      fallback: readString(source, const ['refreshToken', 'refresh_token']),
     );
     final userId = readString(
       user,
       const ['id', 'user_id'],
-      fallback: readString(payload, const ['user_id', 'id']),
+      fallback: readString(source, const ['user_id', 'id']),
     );
     final email = readString(
       user,
       const ['email'],
-      fallback: fallbackEmail.trim(),
+      fallback: readString(source, const ['email'], fallback: fallbackEmail.trim()),
     );
 
     return AuthSessionRecord(
@@ -254,6 +265,24 @@ class RemoteAuthSessionRepository implements AuthSessionRepository {
       accessToken: accessToken,
       refreshToken: refreshToken,
     );
+  }
+
+  AuthSessionRecord? _tryParseVerifiedSession(
+    dynamic body, {
+    required String fallbackEmail,
+    required String fallbackPassword,
+  }) {
+    final session = _parseSession(
+      body,
+      fallbackEmail: fallbackEmail,
+      fallbackPassword: fallbackPassword,
+    );
+
+    if (session.accessToken.trim().isEmpty) {
+      return null;
+    }
+
+    return session;
   }
 
   String _deriveDisplayName(String email) {
@@ -276,5 +305,11 @@ class RemoteAuthSessionRepository implements AuthSessionRepository {
     }
 
     return words.join(' ');
+  }
+
+  void _logAuthDebug(String message) {
+    if (kDebugMode) {
+      debugPrint('Auth debug -> $message');
+    }
   }
 }

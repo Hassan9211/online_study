@@ -51,7 +51,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   Future<void> _sendResetEmail() async {
     final email = _emailController.text.trim();
     if (email.isEmpty) {
-      _showError('Email required hai.');
+      _showError('Email is required.');
       return;
     }
 
@@ -70,7 +70,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   void _continueToPassword() {
     if (_otpController.text.trim().isEmpty) {
-      _showError('OTP required hai.');
+      _showError('Reset code is required.');
       return;
     }
 
@@ -82,23 +82,28 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   Future<void> _resetPassword() async {
     final password = _passwordController.text.trim();
     final confirmPassword = _confirmPasswordController.text.trim();
+    final code = _otpController.text.trim();
 
     if (password.isEmpty || confirmPassword.isEmpty) {
-      _showError('New password aur confirm password required hain.');
+      _showError('Both the new password and confirm password are required.');
+      return;
+    }
+    if (code.isEmpty) {
+      _showError('Reset code is required.');
       return;
     }
     if (password.length < 6) {
-      _showError('Password kam az kam 6 characters ka ho.');
+      _showError('Password must be at least 6 characters long.');
       return;
     }
     if (password != confirmPassword) {
-      _showError('Confirm password new password se match nahi kar raha.');
+      _showError('Confirm password does not match the new password.');
       return;
     }
 
     final didReset = await _authSessionController.resetPassword(
       email: _emailController.text,
-      token: _otpController.text,
+      code: code,
       newPassword: password,
     );
     if (!didReset) {
@@ -114,7 +119,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   void _showError(String message) {
     Get.snackbar(
       'Forgot Password',
-      message.isEmpty ? 'Kuch ghalat ho gaya.' : message,
+      message.isEmpty ? 'Something went wrong.' : message,
       snackPosition: SnackPosition.BOTTOM,
       backgroundColor: Colors.white,
       colorText: AppColors.heading,
@@ -126,195 +131,205 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 18, 24, 28),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              IconButton(
-                onPressed: Get.back,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-                icon: const Icon(
-                  Icons.arrow_back_ios_new_rounded,
-                  size: 18,
-                  color: AppColors.heading,
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Forgot Password',
-                style: theme.textTheme.headlineMedium?.copyWith(
-                  fontSize: 27,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.6,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _descriptionForStep(),
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: AppColors.mutedText,
-                  height: 1.45,
-                ),
-              ),
-              const SizedBox(height: 28),
-              if (_step == _ForgotPasswordStep.email) ...[
-                _SectionLabel(label: 'Email'),
-                const SizedBox(height: 8),
-                _AuthInputField(
-                  controller: _emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  hintText: 'Enter your email',
-                ),
-                const SizedBox(height: 22),
-                AppPrimaryButton(
-                  label: 'Send OTP',
-                  onPressed: _authSessionController.isBusy ? null : _sendResetEmail,
-                ),
-              ] else if (_step == _ForgotPasswordStep.otp) ...[
-                _SectionLabel(label: 'Email'),
-                const SizedBox(height: 8),
-                _ReadOnlyBox(value: _emailController.text.trim()),
-                const SizedBox(height: 18),
-                _SectionLabel(label: 'OTP'),
-                const SizedBox(height: 8),
-                _AuthInputField(
-                  controller: _otpController,
-                  keyboardType: TextInputType.number,
-                  hintText: 'Enter OTP from email',
-                ),
-                const SizedBox(height: 22),
-                AppPrimaryButton(
-                  label: 'Continue',
-                  onPressed: _continueToPassword,
-                ),
-              ] else if (_step == _ForgotPasswordStep.password) ...[
-                _SectionLabel(label: 'New Password'),
-                const SizedBox(height: 8),
-                _AuthInputField(
-                  controller: _passwordController,
-                  obscureText: _obscurePassword,
-                  hintText: 'New password',
-                  suffixIcon: IconButton(
-                    onPressed: () {
-                      setState(() {
-                        _obscurePassword = !_obscurePassword;
-                      });
-                    },
-                    icon: Icon(
-                      _obscurePassword
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility_outlined,
-                      size: 20,
+    return GetBuilder<AuthSessionController>(
+      builder: (authSessionController) {
+        return Scaffold(
+          backgroundColor: Colors.white,
+          body: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 18, 24, 28),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  IconButton(
+                    onPressed: Get.back,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 18,
                       color: AppColors.heading,
                     ),
                   ),
-                ),
-                const SizedBox(height: 18),
-                _SectionLabel(label: 'Confirm Password'),
-                const SizedBox(height: 8),
-                _AuthInputField(
-                  controller: _confirmPasswordController,
-                  obscureText: _obscureConfirmPassword,
-                  hintText: 'Confirm password',
-                  suffixIcon: IconButton(
-                    onPressed: () {
-                      setState(() {
-                        _obscureConfirmPassword = !_obscureConfirmPassword;
-                      });
-                    },
-                    icon: Icon(
-                      _obscureConfirmPassword
-                          ? Icons.visibility_off_outlined
-                          : Icons.visibility_outlined,
-                      size: 20,
-                      color: AppColors.heading,
+                  const SizedBox(height: 20),
+                  Text(
+                    'Forgot Password',
+                    style: theme.textTheme.headlineMedium?.copyWith(
+                      fontSize: 27,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.6,
                     ),
                   ),
-                ),
-                const SizedBox(height: 22),
-                AppPrimaryButton(
-                  label: 'Reset Password',
-                  onPressed: _authSessionController.isBusy ? null : _resetPassword,
-                ),
-              ] else ...[
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(24, 26, 24, 24),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.heading.withValues(alpha: 0.08),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
+                  const SizedBox(height: 8),
+                  Text(
+                    _descriptionForStep(),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: AppColors.mutedText,
+                      height: 1.45,
+                    ),
                   ),
-                  child: Column(
-                    children: [
-                      Container(
-                        width: 62,
-                        height: 62,
-                        decoration: const BoxDecoration(
-                          color: AppColors.primary,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.check,
-                          color: Colors.white,
-                          size: 32,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Password Updated',
-                        style: theme.textTheme.titleLarge?.copyWith(
+                  const SizedBox(height: 28),
+                  if (_step == _ForgotPasswordStep.email) ...[
+                    _SectionLabel(label: 'Email'),
+                    const SizedBox(height: 8),
+                    _AuthInputField(
+                      controller: _emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      hintText: 'Enter your email',
+                    ),
+                    const SizedBox(height: 22),
+                    AppPrimaryButton(
+                      label: 'Send Reset Code',
+                      onPressed: authSessionController.isBusy
+                          ? null
+                          : _sendResetEmail,
+                      isLoading: authSessionController.isBusy,
+                    ),
+                  ] else if (_step == _ForgotPasswordStep.otp) ...[
+                    _SectionLabel(label: 'Email'),
+                    const SizedBox(height: 8),
+                    _ReadOnlyBox(value: _emailController.text.trim()),
+                    const SizedBox(height: 18),
+                    _SectionLabel(label: 'Code'),
+                    const SizedBox(height: 8),
+                    _AuthInputField(
+                      controller: _otpController,
+                      keyboardType: TextInputType.number,
+                      hintText: 'Enter code from email',
+                    ),
+                    const SizedBox(height: 22),
+                    AppPrimaryButton(
+                      label: 'Continue',
+                      onPressed: _continueToPassword,
+                    ),
+                  ] else if (_step == _ForgotPasswordStep.password) ...[
+                    _SectionLabel(label: 'New Password'),
+                    const SizedBox(height: 8),
+                    _AuthInputField(
+                      controller: _passwordController,
+                      obscureText: _obscurePassword,
+                      hintText: 'New password',
+                      suffixIcon: IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _obscurePassword = !_obscurePassword;
+                          });
+                        },
+                        icon: Icon(
+                          _obscurePassword
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
+                          size: 20,
                           color: AppColors.heading,
-                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Aap ab naye password ke sath login kar sakte hain.',
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: AppColors.mutedText,
-                          height: 1.4,
+                    ),
+                    const SizedBox(height: 18),
+                    _SectionLabel(label: 'Confirm Password'),
+                    const SizedBox(height: 8),
+                    _AuthInputField(
+                      controller: _confirmPasswordController,
+                      obscureText: _obscureConfirmPassword,
+                      hintText: 'Confirm password',
+                      suffixIcon: IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _obscureConfirmPassword = !_obscureConfirmPassword;
+                          });
+                        },
+                        icon: Icon(
+                          _obscureConfirmPassword
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
+                          size: 20,
+                          color: AppColors.heading,
                         ),
                       ),
-                      const SizedBox(height: 18),
-                      SizedBox(
-                        width: double.infinity,
-                        child: AppPrimaryButton(
-                          label: 'Back to Login',
-                          onPressed: () => Get.offNamed(AppRoutes.logIn),
-                        ),
+                    ),
+                    const SizedBox(height: 22),
+                    AppPrimaryButton(
+                      label: 'Reset Password',
+                      onPressed: authSessionController.isBusy
+                          ? null
+                          : _resetPassword,
+                      isLoading: authSessionController.isBusy,
+                    ),
+                  ] else ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(24, 26, 24, 24),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.heading.withValues(alpha: 0.08),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 62,
+                            height: 62,
+                            decoration: const BoxDecoration(
+                              color: AppColors.primary,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.check,
+                              color: Colors.white,
+                              size: 32,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Password Updated',
+                            style: theme.textTheme.titleLarge?.copyWith(
+                              color: AppColors.heading,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'You can now log in with your new password.',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: AppColors.mutedText,
+                              height: 1.4,
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          SizedBox(
+                            width: double.infinity,
+                            child: AppPrimaryButton(
+                              label: 'Back to Login',
+                              onPressed: () => Get.offNamed(AppRoutes.logIn),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
   String _descriptionForStep() {
     switch (_step) {
       case _ForgotPasswordStep.email:
-        return 'Apna registered email dein. Hum us par OTP bhej denge.';
+        return 'Enter your registered email address. We will send the reset code there.';
       case _ForgotPasswordStep.otp:
-        return 'Email par aaya hua OTP enter karein.';
+        return 'Enter the reset code sent to your email.';
       case _ForgotPasswordStep.password:
-        return 'Ab apna naya password set karein.';
+        return 'Now set your new password.';
       case _ForgotPasswordStep.success:
         return 'Password reset successfully.';
     }

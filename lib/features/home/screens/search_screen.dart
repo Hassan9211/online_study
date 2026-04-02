@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../../app/routes/app_routes.dart';
+import '../../../core/network/api_endpoints.dart';
 import '../../../core/theme/app_colors.dart';
+import '../controllers/course_catalog_controller.dart';
 import '../models/course_catalog_data.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -16,10 +18,10 @@ class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _selectedCategory = 'All';
 
-  List<CourseCatalogItem> get _filteredCourses {
+  List<CourseCatalogItem> _filteredCoursesFor(List<CourseCatalogItem> source) {
     final query = _searchController.text.trim().toLowerCase();
 
-    return courseCatalogItems.where((course) {
+    return source.where((course) {
       final matchesCategory =
           _selectedCategory == 'All' || course.category == _selectedCategory;
       final matchesQuery =
@@ -32,10 +34,12 @@ class _SearchScreenState extends State<SearchScreen> {
     }).toList();
   }
 
-  List<CourseCatalogItem> get _featuredCourses {
-    return courseCatalogItems
-        .where((course) => course.isPopular || course.isNew)
-        .toList();
+  List<CourseCatalogItem> _featuredCoursesFor(List<CourseCatalogItem> source) {
+    return source.where((course) => course.isPopular || course.isNew).toList();
+  }
+
+  List<String> _availableCategoriesFor(List<String> remoteCategories) {
+    return remoteCategories.isEmpty ? courseFilterCategories : remoteCategories;
   }
 
   @override
@@ -46,17 +50,23 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _openCourse(CourseCatalogItem course) {
     if (course.opensProductDetail) {
-      Get.toNamed(AppRoutes.productDesignCourse);
+      ApiConfig.resolveProductDesignCourse(id: course.id, title: course.title);
+      Get.toNamed(
+        AppRoutes.productDesignCourse,
+        arguments: <String, dynamic>{
+          'courseId': course.id,
+          'courseTitle': course.title,
+        },
+      );
       return;
     }
 
-    Get.snackbar(
-      course.title,
-      'Is course detail ko hum next API step me open kara denge.',
-      snackPosition: SnackPosition.BOTTOM,
-      backgroundColor: Colors.white,
-      colorText: AppColors.heading,
-      margin: const EdgeInsets.all(14),
+    Get.toNamed(
+      AppRoutes.courseDetail,
+      arguments: <String, dynamic>{
+        'courseId': course.id,
+        'course': course,
+      },
     );
   }
 
@@ -68,166 +78,201 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() {});
   }
 
+  Future<void> _refreshSearch() async {
+    await Get.find<CourseCatalogController>().refreshAll();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final filteredCourses = _filteredCourses;
-    final showSuggestedLayout = _searchController.text.trim().isEmpty;
 
-    return Container(
-      color: Colors.white,
-      child: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 120),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Search',
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  color: AppColors.heading,
-                  fontWeight: FontWeight.w800,
+    return GetBuilder<CourseCatalogController>(
+      builder: (catalogController) {
+        final availableCategories = _availableCategoriesFor(
+          catalogController.categories,
+        );
+        final searchSuggestions = catalogController.searchSuggestions.isEmpty
+            ? courseSearchSuggestions
+            : catalogController.searchSuggestions;
+        final filteredCourses = _filteredCoursesFor(catalogController.courses);
+        final featuredCourses = _featuredCoursesFor(catalogController.courses);
+        final showSuggestedLayout = _searchController.text.trim().isEmpty;
+
+        return Container(
+          color: Colors.white,
+          child: SafeArea(
+            child: RefreshIndicator(
+              onRefresh: _refreshSearch,
+              color: AppColors.primary,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
                 ),
-              ),
-              const SizedBox(height: 18),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF7F4FF),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.search_rounded,
-                      color: AppColors.mutedText,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: TextField(
-                        controller: _searchController,
-                        autofocus: true,
-                        onChanged: (_) => setState(() {}),
-                        decoration: const InputDecoration(
-                          hintText: 'Search courses, teacher, category',
-                          border: InputBorder.none,
-                        ),
-                      ),
-                    ),
-                    if (_searchController.text.trim().isNotEmpty)
-                      InkWell(
-                        onTap: () {
-                          _searchController.clear();
-                          setState(() {});
-                        },
-                        child: const Padding(
-                          padding: EdgeInsets.all(4),
-                          child: Icon(
-                            Icons.close_rounded,
-                            color: AppColors.mutedText,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 18),
-              SizedBox(
-                height: 40,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  children: [
-                    ...['All', ...courseFilterCategories].map(
-                      (category) => Padding(
-                        padding: const EdgeInsets.only(right: 10),
-                        child: _SearchCategoryChip(
-                          label: category,
-                          isSelected: _selectedCategory == category,
-                          onTap: () => setState(() {
-                            _selectedCategory = category;
-                          }),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              if (showSuggestedLayout) ...[
-                Text(
-                  'Popular searches',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    color: AppColors.heading,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: courseSearchSuggestions.map((suggestion) {
-                    return _SearchSuggestionChip(
-                      label: suggestion,
-                      onTap: () => _applySuggestion(suggestion),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  'Featured courses',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    color: AppColors.heading,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                ..._featuredCourses.map(
-                  (course) => Padding(
-                    padding: const EdgeInsets.only(bottom: 14),
-                    child: _SearchCourseCard(
-                      course: course,
-                      onTap: () => _openCourse(course),
-                    ),
-                  ),
-                ),
-              ] else ...[
-                Row(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 120),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Results',
-                      style: theme.textTheme.titleMedium?.copyWith(
+                      'Search',
+                      style: theme.textTheme.headlineSmall?.copyWith(
                         color: AppColors.heading,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const Spacer(),
-                    Text(
-                      '${filteredCourses.length} found',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: AppColors.mutedText,
-                        fontWeight: FontWeight.w600,
+                    const SizedBox(height: 18),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF7F4FF),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.search_rounded,
+                            color: AppColors.mutedText,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: TextField(
+                              controller: _searchController,
+                              autofocus: true,
+                              onChanged: (_) => setState(() {}),
+                              decoration: const InputDecoration(
+                                hintText: 'Search courses, teacher, category',
+                                border: InputBorder.none,
+                              ),
+                            ),
+                          ),
+                          if (_searchController.text.trim().isNotEmpty)
+                            InkWell(
+                              onTap: () {
+                                _searchController.clear();
+                                setState(() {});
+                              },
+                              child: const Padding(
+                                padding: EdgeInsets.all(4),
+                                child: Icon(
+                                  Icons.close_rounded,
+                                  color: AppColors.mutedText,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      height: 40,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: [
+                          ...['All', ...availableCategories].map(
+                            (category) => Padding(
+                              padding: const EdgeInsets.only(right: 10),
+                              child: _SearchCategoryChip(
+                                label: category,
+                                isSelected: _selectedCategory == category,
+                                onTap: () => setState(() {
+                                  _selectedCategory = category;
+                                }),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    if (catalogController.lastErrorMessage.isNotEmpty) ...[
+                      Text(
+                        catalogController.lastErrorMessage,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: AppColors.mutedText,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (catalogController.isLoadingCatalog &&
+                        catalogController.courses.isEmpty)
+                      const _SearchLoadingState()
+                    else if (showSuggestedLayout) ...[
+                      Text(
+                        'Popular searches',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: AppColors.heading,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: searchSuggestions.map((suggestion) {
+                          return _SearchSuggestionChip(
+                            label: suggestion,
+                            onTap: () => _applySuggestion(suggestion),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        'Featured courses',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: AppColors.heading,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      ...featuredCourses.map(
+                        (course) => Padding(
+                          padding: const EdgeInsets.only(bottom: 14),
+                          child: _SearchCourseCard(
+                            course: course,
+                            onTap: () => _openCourse(course),
+                          ),
+                        ),
+                      ),
+                    ] else ...[
+                      Row(
+                        children: [
+                          Text(
+                            'Results',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: AppColors.heading,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${filteredCourses.length} found',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: AppColors.mutedText,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      if (filteredCourses.isEmpty)
+                        const _SearchEmptyState()
+                      else
+                        ...filteredCourses.map(
+                          (course) => Padding(
+                            padding: const EdgeInsets.only(bottom: 14),
+                            child: _SearchCourseCard(
+                              course: course,
+                              onTap: () => _openCourse(course),
+                            ),
+                          ),
+                        ),
+                    ],
                   ],
                 ),
-                const SizedBox(height: 14),
-                if (filteredCourses.isEmpty)
-                  const _SearchEmptyState()
-                else
-                  ...filteredCourses.map(
-                    (course) => Padding(
-                      padding: const EdgeInsets.only(bottom: 14),
-                      child: _SearchCourseCard(
-                        course: course,
-                        onTap: () => _openCourse(course),
-                      ),
-                    ),
-                  ),
-              ],
-            ],
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -357,9 +402,7 @@ class _SearchCourseCard extends StatelessWidget {
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: AppColors.warmAccent.withValues(
-                                alpha: 0.12,
-                              ),
+                              color: AppColors.warmAccent.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: Text(
@@ -384,7 +427,7 @@ class _SearchCourseCard extends StatelessWidget {
                     Row(
                       children: [
                         Text(
-                          '\$${course.price}',
+                          course.priceLabel,
                           style: theme.textTheme.titleSmall?.copyWith(
                             color: AppColors.primary,
                             fontWeight: FontWeight.w800,
@@ -399,10 +442,14 @@ class _SearchCourseCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Text(
-                          course.category,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: AppColors.mutedText,
+                        Expanded(
+                          child: Text(
+                            course.category,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: AppColors.mutedText,
+                            ),
                           ),
                         ),
                       ],
@@ -464,6 +511,20 @@ class _SearchEmptyState extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SearchLoadingState extends StatelessWidget {
+  const _SearchLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40),
+      alignment: Alignment.center,
+      child: const CircularProgressIndicator(color: AppColors.primary),
     );
   }
 }

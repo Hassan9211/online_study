@@ -33,12 +33,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
       return;
     }
 
+    final trimmedEmail = _emailController.text.trim();
     _authSessionController.prepareRegistration(
-      email: _emailController.text,
+      email: trimmedEmail,
       password: _passwordController.text,
       termsAccepted: _agreeToTerms,
     );
-    Get.toNamed(AppRoutes.phoneVerification);
+    Get.toNamed(
+      AppRoutes.phoneVerification,
+      arguments: <String, String>{'channel': 'phone'},
+    );
   }
 
   @override
@@ -153,7 +157,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: AppPrimaryButton(
-                        label: 'Creat account',
+                        label: 'Create account',
                         onPressed: _canCreateAccount
                             ? _handleCreateAccount
                             : null,

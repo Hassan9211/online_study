@@ -15,6 +15,14 @@ class LocalProfileRepository implements ProfileRepository {
   static const String _avatarUrlKey = 'profile_avatar_url';
 
   @override
+  Future<ProfileRecord> loadCachedProfile() => loadProfile();
+
+  @override
+  Future<ProfileRecord> saveCachedProfile(ProfileRecord profile) {
+    return saveProfile(profile);
+  }
+
+  @override
   Future<ProfileRecord> loadProfile() async {
     final preferences = await SharedPreferences.getInstance();
     final savedImagePath = preferences.getString(_imagePathKey);
@@ -62,5 +70,17 @@ class LocalProfileRepository implements ProfileRepository {
     required String imagePath,
   }) {
     return saveProfile(profile.copyWith(avatarLocalPath: imagePath));
+  }
+
+  @override
+  Future<void> clearCachedProfile() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.remove(_idKey);
+    await preferences.remove(_nameKey);
+    await preferences.remove(_emailKey);
+    await preferences.remove(_phoneKey);
+    await preferences.remove(_bioKey);
+    await preferences.remove(_imagePathKey);
+    await preferences.remove(_avatarUrlKey);
   }
 }

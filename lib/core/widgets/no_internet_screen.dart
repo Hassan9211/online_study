@@ -63,8 +63,9 @@ class NoInternetScreen extends StatelessWidget {
                         SizedBox(
                           width: 180,
                           child: AppPrimaryButton(
-                            label: isChecking ? 'Checking...' : 'Try again',
+                            label: 'Try again',
                             onPressed: isChecking ? null : onRetry,
+                            isLoading: isChecking,
                           ),
                         ),
                       ],

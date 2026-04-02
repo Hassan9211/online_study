@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 
 import '../../../app/routes/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
+import '../controllers/profile_controller.dart';
 import '../widgets/profile_avatar.dart';
 
 class AccountScreen extends StatelessWidget {
@@ -15,6 +16,10 @@ class AccountScreen extends StatelessWidget {
     (label: 'Help', route: AppRoutes.helpCenter),
   ];
 
+  Future<void> _refreshAccount() async {
+    await Get.find<ProfileController>().refreshProfile();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -22,10 +27,14 @@ class AccountScreen extends StatelessWidget {
     return Container(
       color: Colors.white,
       child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        child: RefreshIndicator(
+          onRefresh: _refreshAccount,
+          color: AppColors.primary,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
             children: [
               Text(
                 'Account',

@@ -2,12 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../../app/routes/app_routes.dart';
+import '../../../core/network/api_endpoints.dart';
 import '../../../core/theme/app_colors.dart';
+import '../controllers/course_catalog_controller.dart';
 import '../controllers/product_design_course_controller.dart';
 import '../models/product_design_course_data.dart';
 
 class ProductDesignCourseScreen extends StatelessWidget {
   const ProductDesignCourseScreen({super.key});
+
+  void _syncResolvedCourse() {
+    final arguments = Get.arguments;
+    if (arguments is! Map) {
+      return;
+    }
+
+    ApiConfig.resolveProductDesignCourse(
+      id: arguments['courseId']?.toString() ?? '',
+      title: arguments['courseTitle']?.toString() ?? '',
+    );
+  }
 
   void _openLesson(
     ProductDesignCourseController controller,
@@ -16,7 +30,7 @@ class ProductDesignCourseScreen extends StatelessWidget {
     if (controller.isLessonLocked(index)) {
       Get.snackbar(
         'Video Locked',
-        'Buy Now k baad yeh video play hogi.',
+        'Purchase the course to unlock this video.',
         snackPosition: SnackPosition.BOTTOM,
         backgroundColor: Colors.white,
         colorText: AppColors.heading,
@@ -41,16 +55,63 @@ class ProductDesignCourseScreen extends StatelessWidget {
     Get.toNamed(AppRoutes.productDesignPayment);
   }
 
+  Future<void> _toggleFavourite(
+    CourseCatalogController catalogController,
+    bool isFavourite,
+  ) async {
+    final nextValue = !isFavourite;
+    final didUpdate = await catalogController.setCourseFavourite(
+      ApiConfig.productDesignCourseId,
+      isFavourite: nextValue,
+    );
+
+    if (!didUpdate) {
+      Get.snackbar(
+        'Favourite Update Failed',
+        catalogController.lastErrorMessage.isEmpty
+            ? 'Could not update the favourite status right now.'
+            : catalogController.lastErrorMessage,
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: Colors.white,
+        colorText: AppColors.heading,
+        margin: const EdgeInsets.all(14),
+      );
+      return;
+    }
+
+    Get.snackbar(
+      nextValue ? 'Course Saved' : 'Course Removed',
+      nextValue
+          ? 'This course was added to your favourites.'
+          : 'This course was removed from your favourites.',
+      snackPosition: SnackPosition.BOTTOM,
+      backgroundColor: Colors.white,
+      colorText: AppColors.heading,
+      margin: const EdgeInsets.all(14),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    _syncResolvedCourse();
     final theme = Theme.of(context);
 
-    return GetBuilder<ProductDesignCourseController>(
-      builder: (controller) {
-        return Scaffold(
+    return GetBuilder<CourseCatalogController>(
+      builder: (catalogController) {
+        final isFavourite = catalogController.isCourseFavourite(
+          ApiConfig.productDesignCourseId,
+        );
+        return GetBuilder<ProductDesignCourseController>(
+          builder: (controller) {
+            return Scaffold(
           backgroundColor: const Color(0xFFFFF5F7),
           bottomNavigationBar: _CourseBottomBar(
             isPurchased: controller.isPurchased,
+            isFavourite: isFavourite,
+            onToggleFavourite: () => _toggleFavourite(
+              catalogController,
+              isFavourite,
+            ),
             onPressed: controller.isPurchased
                 ? null
                 : () => _buyCourse(controller),
@@ -180,6 +241,8 @@ class ProductDesignCourseScreen extends StatelessWidget {
             ),
           ),
         );
+          },
+        );
       },
     );
   }
@@ -272,10 +335,14 @@ class _CoursePosterHeader extends StatelessWidget {
 class _CourseBottomBar extends StatelessWidget {
   const _CourseBottomBar({
     required this.isPurchased,
+    required this.isFavourite,
+    required this.onToggleFavourite,
     required this.onPressed,
   });
 
   final bool isPurchased;
+  final bool isFavourite;
+  final VoidCallback onToggleFavourite;
   final VoidCallback? onPressed;
 
   @override
@@ -297,16 +364,22 @@ class _CourseBottomBar extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
           child: Row(
             children: [
-              Container(
-                width: 62,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF0F3),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.star_border_rounded,
-                  color: AppColors.warmAccent,
+              InkWell(
+                onTap: onToggleFavourite,
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  width: 62,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF0F3),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(
+                    isFavourite
+                        ? Icons.star_rounded
+                        : Icons.star_border_rounded,
+                    color: AppColors.warmAccent,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),

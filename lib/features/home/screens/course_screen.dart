@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../../app/routes/app_routes.dart';
+import '../../../core/network/api_endpoints.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/app_buttons.dart';
+import '../controllers/course_catalog_controller.dart';
+import '../controllers/profile_controller.dart';
 import '../models/course_catalog_data.dart';
 import '../widgets/profile_avatar.dart';
 
@@ -15,8 +18,8 @@ class CourseScreen extends StatefulWidget {
 }
 
 class _CourseScreenState extends State<CourseScreen> {
-  static const double _minPrice = 90;
-  static const double _maxPrice = 260;
+  static const double _minPrice = 0;
+  static const double _maxPrice = 100;
 
   final TextEditingController _searchController = TextEditingController();
   final Set<String> _selectedCategories = <String>{};
@@ -34,10 +37,15 @@ class _CourseScreenState extends State<CourseScreen> {
 
   bool get _isSearchMode => _searchController.text.trim().isNotEmpty;
 
-  List<CourseCatalogItem> get _visibleCourses {
+  bool get _hasCustomPriceRange {
+    return _selectedPriceRange.start > _minPrice ||
+        _selectedPriceRange.end < _maxPrice;
+  }
+
+  List<CourseCatalogItem> _visibleCoursesFor(List<CourseCatalogItem> source) {
     final query = _searchController.text.trim().toLowerCase();
 
-    return courseCatalogItems.where((course) {
+    return source.where((course) {
       final matchesTopFilter = switch (_selectedFilter) {
         1 => course.isPopular,
         2 => course.isNew,
@@ -54,8 +62,9 @@ class _CourseScreenState extends State<CourseScreen> {
           _selectedCategories.contains(course.category);
 
       final matchesPrice =
-          course.price >= _selectedPriceRange.start.round() &&
-          course.price <= _selectedPriceRange.end.round();
+          !_hasCustomPriceRange ||
+          (course.displayPrice >= _selectedPriceRange.start.round() &&
+              course.displayPrice <= _selectedPriceRange.end.round());
 
       final durationRange = courseDurationRangeFor(_selectedDuration);
       final matchesDuration =
@@ -69,6 +78,94 @@ class _CourseScreenState extends State<CourseScreen> {
           matchesPrice &&
           matchesDuration;
     }).toList();
+  }
+
+  List<String> _availableCategoriesFor(List<String> remoteCategories) {
+    return remoteCategories.isEmpty ? courseFilterCategories : remoteCategories;
+  }
+
+  List<_CategoryOverviewCardData> _categoryCardsFor(
+    List<String> remoteCategories,
+    List<CourseCatalogItem> courses,
+  ) {
+    final availableCategories = _availableCategoriesFor(remoteCategories);
+    final categoryCounts = <String, int>{};
+    for (final course in courses) {
+      final category = course.category.trim();
+      if (category.isEmpty) {
+        continue;
+      }
+
+      categoryCounts.update(category, (count) => count + 1, ifAbsent: () => 1);
+    }
+
+    final categories = <String>[
+      ...availableCategories,
+      ...categoryCounts.keys.where(
+        (category) => !availableCategories.contains(category),
+      ),
+    ];
+
+    if (categories.isEmpty) {
+      return _fallbackCategoryCards;
+    }
+
+    return categories.take(6).toList().asMap().entries.map((entry) {
+      final index = entry.key;
+      final category = entry.value;
+      final palette = _categoryPaletteFor(index);
+      final courseCount = categoryCounts[category] ?? 0;
+
+      return _CategoryOverviewCardData(
+        title: category,
+        subtitle: courseCount == 1 ? '1 course' : '$courseCount courses',
+        backgroundColor: palette.backgroundColor,
+        accentColor: palette.accentColor,
+        width: index == 0 ? 168 : 128,
+        type: _categoryArtTypeFor(index),
+      );
+    }).toList();
+  }
+
+  _CategoryCardPalette _categoryPaletteFor(int index) {
+    const palettes = <_CategoryCardPalette>[
+      _CategoryCardPalette(
+        backgroundColor: Color(0xFFD8F0FF),
+        accentColor: AppColors.primary,
+      ),
+      _CategoryCardPalette(
+        backgroundColor: Color(0xFFF2DFFF),
+        accentColor: Color(0xFFB66BFF),
+      ),
+      _CategoryCardPalette(
+        backgroundColor: Color(0xFFFFE5D6),
+        accentColor: AppColors.warmAccent,
+      ),
+      _CategoryCardPalette(
+        backgroundColor: Color(0xFFD7F3EE),
+        accentColor: Color(0xFF1EA884),
+      ),
+      _CategoryCardPalette(
+        backgroundColor: Color(0xFFE3E2FF),
+        accentColor: Color(0xFF6F5CFF),
+      ),
+      _CategoryCardPalette(
+        backgroundColor: Color(0xFFFFE4EC),
+        accentColor: Color(0xFFFF6B8A),
+      ),
+    ];
+
+    return palettes[index % palettes.length];
+  }
+
+  _CategoryArtType _categoryArtTypeFor(int index) {
+    const types = <_CategoryArtType>[
+      _CategoryArtType.language,
+      _CategoryArtType.painting,
+      _CategoryArtType.music,
+    ];
+
+    return types[index % types.length];
   }
 
   @override
@@ -91,12 +188,16 @@ class _CourseScreenState extends State<CourseScreen> {
   }
 
   Future<void> _openFilterSheet() async {
+    final catalogController = Get.find<CourseCatalogController>();
     final result = await showModalBottomSheet<_CourseFilterResult>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
         return _CourseFilterSheet(
+          availableCategories: _availableCategoriesFor(
+            catalogController.categories,
+          ),
           initialCategories: _selectedCategories,
           initialDuration: _selectedDuration,
           initialPriceRange: _selectedPriceRange,
@@ -119,186 +220,288 @@ class _CourseScreenState extends State<CourseScreen> {
     });
   }
 
+  void _openCourse(CourseCatalogItem course) {
+    if (course.opensProductDetail) {
+      ApiConfig.resolveProductDesignCourse(id: course.id, title: course.title);
+      Get.toNamed(
+        AppRoutes.productDesignCourse,
+        arguments: <String, dynamic>{
+          'courseId': course.id,
+          'courseTitle': course.title,
+        },
+      );
+      return;
+    }
+    Get.toNamed(
+      AppRoutes.courseDetail,
+      arguments: <String, dynamic>{
+        'courseId': course.id,
+        'course': course,
+      },
+    );
+  }
+
+  Future<void> _refreshCatalog() async {
+    final refreshTasks = <Future<void>>[
+      Get.find<CourseCatalogController>().refreshAll(),
+    ];
+    if (Get.isRegistered<ProfileController>()) {
+      refreshTasks.add(Get.find<ProfileController>().refreshProfile());
+    }
+    await Future.wait<void>(refreshTasks);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final visibleCourses = _visibleCourses;
 
-    return Container(
-      color: Colors.white,
-      child: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (_isSearchMode) ...[
-                Row(
+    return GetBuilder<CourseCatalogController>(
+      builder: (catalogController) {
+        final searchSuggestions = catalogController.searchSuggestions.isEmpty
+            ? courseSearchSuggestions
+            : catalogController.searchSuggestions;
+        final visibleCourses = _visibleCoursesFor(catalogController.courses);
+        final categoryCards = _categoryCardsFor(
+          catalogController.categories,
+          catalogController.courses,
+        );
+
+        return Container(
+          color: Colors.white,
+          child: SafeArea(
+            child: RefreshIndicator(
+              onRefresh: _refreshCatalog,
+              color: AppColors.primary,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    IconButton(
-                      onPressed: _clearSearch,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      icon: const Icon(
-                        Icons.visibility_off_outlined,
-                        color: AppColors.heading,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                _CourseSearchBar(
-                  controller: _searchController,
-                  hasActiveFilters: _hasActiveFilters,
-                  onChanged: (_) => setState(() {}),
-                  onClear: _clearSearch,
-                  onOpenFilter: _openFilterSheet,
-                ),
-                const SizedBox(height: 14),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 10,
-                  children: courseSearchSuggestions.map((suggestion) {
-                    return _SearchSuggestionChip(
-                      label: suggestion,
-                      onTap: () => _setSearchQuery(suggestion),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 18),
-                Text(
-                  'Results',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    color: AppColors.heading,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 14),
-              ] else ...[
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Course',
-                        style: theme.textTheme.headlineSmall?.copyWith(
-                          color: AppColors.heading,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    ProfileAvatar(
-                      size: 38,
-                      onTap: () => Get.toNamed(AppRoutes.editAccount),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AppColors.heading.withValues(alpha: 0.08),
-                          blurRadius: 16,
-                          offset: const Offset(0, 6),
+                  if (_isSearchMode) ...[
+                    Row(
+                      children: [
+                        IconButton(
+                          onPressed: _clearSearch,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          icon: const Icon(
+                            Icons.visibility_off_outlined,
+                            color: AppColors.heading,
+                          ),
                         ),
                       ],
-                      innerPadding: 3,
+                    ),
+                    const SizedBox(height: 18),
+                    _CourseSearchBar(
+                      controller: _searchController,
+                      hasActiveFilters: _hasActiveFilters,
+                      onChanged: (_) => setState(() {}),
+                      onClear: _clearSearch,
+                      onOpenFilter: _openFilterSheet,
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 10,
+                      children: searchSuggestions.map((suggestion) {
+                        return _SearchSuggestionChip(
+                          label: suggestion,
+                          onTap: () => _setSearchQuery(suggestion),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      'Results',
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        color: AppColors.heading,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ] else ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Course',
+                            style: theme.textTheme.headlineSmall?.copyWith(
+                              color: AppColors.heading,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        ProfileAvatar(
+                          size: 38,
+                          onTap: () => Get.toNamed(AppRoutes.editAccount),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.heading.withValues(alpha: 0.08),
+                              blurRadius: 16,
+                              offset: const Offset(0, 6),
+                            ),
+                          ],
+                          innerPadding: 3,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    _CourseSearchBar(
+                      controller: _searchController,
+                      hasActiveFilters: _hasActiveFilters,
+                      onChanged: (_) => setState(() {}),
+                      onClear: _clearSearch,
+                      onOpenFilter: _openFilterSheet,
+                    ),
+                    const SizedBox(height: 22),
+                    SizedBox(
+                      height: 120,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: categoryCards.length,
+                        separatorBuilder: (_, _) => const SizedBox(width: 14),
+                        itemBuilder: (context, index) {
+                          final card = categoryCards[index];
+                          return _CourseCategoryCard(
+                            title: card.title,
+                            subtitle: card.subtitle,
+                            backgroundColor: card.backgroundColor,
+                            accentColor: card.accentColor,
+                            width: card.width,
+                            type: card.type,
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Text(
+                      'Choose your course',
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        color: AppColors.heading,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        _FilterChip(
+                          label: 'All',
+                          isSelected: _selectedFilter == 0,
+                          onTap: () => setState(() => _selectedFilter = 0),
+                        ),
+                        const SizedBox(width: 12),
+                        _FilterChip(
+                          label: 'Popular',
+                          isSelected: _selectedFilter == 1,
+                          onTap: () => setState(() => _selectedFilter = 1),
+                        ),
+                        const SizedBox(width: 12),
+                        _FilterChip(
+                          label: 'New',
+                          isSelected: _selectedFilter == 2,
+                          onTap: () => setState(() => _selectedFilter = 2),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                  ],
+                  if (catalogController.lastErrorMessage.isNotEmpty) ...[
+                    Text(
+                      catalogController.lastErrorMessage,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: AppColors.mutedText,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (catalogController.isLoadingCatalog &&
+                      catalogController.courses.isEmpty)
+                    const _CourseLoadingState()
+                  else if (visibleCourses.isEmpty)
+                    const _EmptyCourseState()
+                  else
+                    ...visibleCourses.map(
+                      (course) => Padding(
+                        padding: const EdgeInsets.only(bottom: 14),
+                        child: _CourseListItem(
+                          course: course,
+                          onTap: () => _openCourse(course),
+                        ),
+                      ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 18),
-                _CourseSearchBar(
-                  controller: _searchController,
-                  hasActiveFilters: _hasActiveFilters,
-                  onChanged: (_) => setState(() {}),
-                  onClear: _clearSearch,
-                  onOpenFilter: _openFilterSheet,
-                ),
-                const SizedBox(height: 22),
-                SizedBox(
-                  height: 120,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: const [
-                      _CourseCategoryCard(
-                        title: 'Language',
-                        subtitle: '24 courses',
-                        backgroundColor: Color(0xFFD8F0FF),
-                        accentColor: AppColors.primary,
-                        width: 168,
-                        type: _CategoryArtType.language,
-                      ),
-                      SizedBox(width: 14),
-                      _CourseCategoryCard(
-                        title: 'Painting',
-                        subtitle: '18 courses',
-                        backgroundColor: Color(0xFFF2DFFF),
-                        accentColor: Color(0xFFB66BFF),
-                        width: 128,
-                        type: _CategoryArtType.painting,
-                      ),
-                      SizedBox(width: 14),
-                      _CourseCategoryCard(
-                        title: 'Music',
-                        subtitle: '12 courses',
-                        backgroundColor: Color(0xFFFFE5D6),
-                        accentColor: AppColors.warmAccent,
-                        width: 128,
-                        type: _CategoryArtType.music,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 22),
-                Text(
-                  'Choice your course',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    color: AppColors.heading,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    _FilterChip(
-                      label: 'All',
-                      isSelected: _selectedFilter == 0,
-                      onTap: () => setState(() => _selectedFilter = 0),
-                    ),
-                    const SizedBox(width: 12),
-                    _FilterChip(
-                      label: 'Popular',
-                      isSelected: _selectedFilter == 1,
-                      onTap: () => setState(() => _selectedFilter = 1),
-                    ),
-                    const SizedBox(width: 12),
-                    _FilterChip(
-                      label: 'New',
-                      isSelected: _selectedFilter == 2,
-                      onTap: () => setState(() => _selectedFilter = 2),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-              ],
-              if (visibleCourses.isEmpty)
-                const _EmptyCourseState()
-              else
-                ...visibleCourses.map(
-                  (course) => Padding(
-                    padding: const EdgeInsets.only(bottom: 14),
-                    child: _CourseListItem(
-                      course: course,
-                      onTap: course.opensProductDetail
-                          ? () => Get.toNamed(AppRoutes.productDesignCourse)
-                          : null,
-                    ),
-                  ),
-                ),
-            ],
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
 
+const List<_CategoryOverviewCardData> _fallbackCategoryCards =
+    <_CategoryOverviewCardData>[
+      _CategoryOverviewCardData(
+        title: 'Language',
+        subtitle: '24 courses',
+        backgroundColor: Color(0xFFD8F0FF),
+        accentColor: AppColors.primary,
+        width: 168,
+        type: _CategoryArtType.language,
+      ),
+      _CategoryOverviewCardData(
+        title: 'Painting',
+        subtitle: '18 courses',
+        backgroundColor: Color(0xFFF2DFFF),
+        accentColor: Color(0xFFB66BFF),
+        width: 128,
+        type: _CategoryArtType.painting,
+      ),
+      _CategoryOverviewCardData(
+        title: 'Music',
+        subtitle: '12 courses',
+        backgroundColor: Color(0xFFFFE5D6),
+        accentColor: AppColors.warmAccent,
+        width: 128,
+        type: _CategoryArtType.music,
+      ),
+    ];
+
+class _CategoryOverviewCardData {
+  const _CategoryOverviewCardData({
+    required this.title,
+    required this.subtitle,
+    required this.backgroundColor,
+    required this.accentColor,
+    required this.width,
+    required this.type,
+  });
+
+  final String title;
+  final String subtitle;
+  final Color backgroundColor;
+  final Color accentColor;
+  final double width;
+  final _CategoryArtType type;
+}
+
+class _CategoryCardPalette {
+  const _CategoryCardPalette({
+    required this.backgroundColor,
+    required this.accentColor,
+  });
+
+  final Color backgroundColor;
+  final Color accentColor;
+}
+
 class _CourseFilterSheet extends StatefulWidget {
   const _CourseFilterSheet({
+    required this.availableCategories,
     required this.initialCategories,
     required this.initialDuration,
     required this.initialPriceRange,
@@ -306,6 +509,7 @@ class _CourseFilterSheet extends StatefulWidget {
     required this.maxPrice,
   });
 
+  final List<String> availableCategories;
   final Set<String> initialCategories;
   final String? initialDuration;
   final RangeValues initialPriceRange;
@@ -388,7 +592,7 @@ class _CourseFilterSheetState extends State<_CourseFilterSheet> {
               Wrap(
                 spacing: 8,
                 runSpacing: 10,
-                children: courseFilterCategories.map((category) {
+                children: widget.availableCategories.map((category) {
                   final isSelected = _categories.contains(category);
                   return _SheetChip(
                     label: category,
@@ -1051,7 +1255,7 @@ class _CourseListItem extends StatelessWidget {
                     Row(
                       children: [
                         Text(
-                          '\$${course.price}',
+                          course.priceLabel,
                           style: theme.textTheme.titleSmall?.copyWith(
                             color: AppColors.primary,
                             fontWeight: FontWeight.w800,
@@ -1135,6 +1339,20 @@ class _EmptyCourseState extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _CourseLoadingState extends StatelessWidget {
+  const _CourseLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 40),
+      alignment: Alignment.center,
+      child: const CircularProgressIndicator(color: AppColors.primary),
     );
   }
 }

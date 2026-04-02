@@ -1,8 +1,13 @@
+import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 
 import '../../../features/home/controllers/message_center_controller.dart';
 import '../../../features/home/controllers/profile_controller.dart';
+import '../../../features/home/controllers/product_design_course_controller.dart';
 import '../../../features/home/controllers/settings_controller.dart';
+import '../../../features/home/controllers/course_catalog_controller.dart';
+import '../../../features/home/controllers/course_purchase_controller.dart';
+import '../../../features/home/controllers/home_dashboard_controller.dart';
 import '../models/auth_session_record.dart';
 import '../repositories/auth_session_repository.dart';
 
@@ -25,6 +30,8 @@ class AuthSessionController extends GetxController {
   bool get isLoggedIn => _session.isLoggedIn;
   String get email => _session.email;
   String get password => _session.password;
+  String get pendingEmail => _pendingEmail;
+  String get pendingPhone => _pendingPhone;
   bool get hasSavedCredentials => _session.hasSavedCredentials;
   String get lastErrorMessage => _lastErrorMessage;
 
@@ -60,7 +67,7 @@ class AuthSessionController extends GetxController {
         email: normalizedEmail,
         password: normalizedPassword,
       );
-      await _syncProfileEmail(_session.email);
+      await _prepareProfileForSession(email: _session.email, userId: _session.userId);
       await _refreshAppData();
       update();
       return true;
@@ -73,17 +80,28 @@ class AuthSessionController extends GetxController {
     }
   }
 
-  Future<bool> sendOtp({required String phone}) async {
+  Future<bool> sendOtp({String email = '', String phone = ''}) async {
+    final normalizedEmail = email.trim();
     final normalizedPhone = phone.trim();
-    if (normalizedPhone.isEmpty) {
+    if (normalizedEmail.isEmpty && normalizedPhone.isEmpty) {
       return false;
     }
+
+    _logOtpDebug(
+      'OTP send requested for email=$normalizedEmail phone=$normalizedPhone',
+    );
 
     _setBusy(true);
     _lastErrorMessage = '';
 
     try {
-      await _repository.sendOtp(phone: normalizedPhone);
+      await _repository.sendOtp(
+        email: normalizedEmail,
+        phone: normalizedPhone,
+      );
+      if (normalizedEmail.isNotEmpty) {
+        _pendingEmail = normalizedEmail;
+      }
       _pendingPhone = normalizedPhone;
       update();
       return true;
@@ -97,14 +115,21 @@ class AuthSessionController extends GetxController {
   }
 
   Future<bool> completeRegistration({
-    required String phone,
+    String email = '',
+    String phone = '',
     required String code,
   }) async {
-    final normalizedPhone = phone.trim().isEmpty ? _pendingPhone : phone.trim();
-    final normalizedCode = code.trim();
-    if (_pendingEmail.isEmpty ||
-        _pendingPassword.isEmpty ||
-        normalizedPhone.isEmpty ||
+    final normalizedEmail = email.trim().isNotEmpty
+        ? email.trim()
+        : _pendingEmail.trim();
+    final normalizedPhone = _pendingPhone.trim().isNotEmpty
+        ? _pendingPhone.trim()
+        : phone.trim();
+    final normalizedCode = code.replaceAll(RegExp(r'\D'), '').trim();
+    _logOtpDebug(
+      'OTP verify requested with email=$normalizedEmail pendingPhone=$_pendingPhone enteredPhone=${phone.trim()} requestPhone=$normalizedPhone code=$normalizedCode',
+    );
+    if ((normalizedEmail.isEmpty && normalizedPhone.isEmpty) ||
         normalizedCode.isEmpty) {
       return false;
     }
@@ -113,19 +138,50 @@ class AuthSessionController extends GetxController {
     _lastErrorMessage = '';
 
     try {
-      await _repository.verifyOtp(phone: normalizedPhone, code: normalizedCode);
-      _session = await _repository.signUp(
-        email: _pendingEmail,
-        password: _pendingPassword,
+      final verifiedSession = await _repository.verifyOtp(
+        email: normalizedEmail,
         phone: normalizedPhone,
-        termsAccepted: _pendingTermsAccepted,
+        code: normalizedCode,
+        fallbackEmail: normalizedEmail,
+        fallbackPassword: _pendingPassword,
       );
+
+      if (verifiedSession != null) {
+        _session = verifiedSession.copyWith(
+          email: verifiedSession.email.trim().isEmpty
+              ? normalizedEmail
+              : verifiedSession.email,
+          password: _pendingPassword.trim().isEmpty
+              ? verifiedSession.password
+              : _pendingPassword.trim(),
+        );
+        await _persistSession();
+      } else {
+        if (_pendingEmail.isEmpty || _pendingPassword.isEmpty) {
+          return false;
+        }
+
+        _session = await _repository.signUp(
+          email: _pendingEmail,
+          password: _pendingPassword,
+          phone: normalizedPhone,
+          termsAccepted: _pendingTermsAccepted,
+        );
+      }
+
+      final profileEmail = _session.email.trim().isEmpty
+          ? normalizedEmail
+          : _session.email;
       _pendingEmail = '';
       _pendingPassword = '';
       _pendingPhone = '';
       _pendingTermsAccepted = false;
 
-      await _syncProfileEmail(_session.email);
+      await _prepareProfileForSession(
+        email: profileEmail,
+        phone: normalizedPhone,
+        userId: _session.userId,
+      );
       await _refreshAppData();
       update();
       return true;
@@ -201,7 +257,7 @@ class AuthSessionController extends GetxController {
 
   Future<bool> resetPassword({
     required String email,
-    required String token,
+    required String code,
     required String newPassword,
   }) async {
     _setBusy(true);
@@ -210,7 +266,7 @@ class AuthSessionController extends GetxController {
     try {
       await _repository.resetPassword(
         email: email.trim(),
-        token: token.trim(),
+        code: code.trim(),
         newPassword: newPassword.trim(),
       );
       update();
@@ -240,6 +296,27 @@ class AuthSessionController extends GetxController {
     _pendingPassword = '';
     _pendingPhone = '';
     _pendingTermsAccepted = false;
+    if (Get.isRegistered<MessageCenterController>()) {
+      await Get.find<MessageCenterController>().resetForSignedOutUser();
+    }
+    if (Get.isRegistered<ProfileController>()) {
+      await Get.find<ProfileController>().clearProfile();
+    }
+    if (Get.isRegistered<SettingsController>()) {
+      await Get.find<SettingsController>().resetForSignedOutUser();
+    }
+    if (Get.isRegistered<CourseCatalogController>()) {
+      await Get.find<CourseCatalogController>().resetForSignedOutUser();
+    }
+    if (Get.isRegistered<CoursePurchaseController>()) {
+      await Get.find<CoursePurchaseController>().resetForSignedOutUser();
+    }
+    if (Get.isRegistered<ProductDesignCourseController>()) {
+      await Get.find<ProductDesignCourseController>().resetForSignedOutUser();
+    }
+    if (Get.isRegistered<HomeDashboardController>()) {
+      await Get.find<HomeDashboardController>().resetForSignedOutUser();
+    }
     await _persistSession();
     update();
   }
@@ -255,28 +332,54 @@ class AuthSessionController extends GetxController {
     await _repository.saveSession(_session);
   }
 
-  Future<void> _syncProfileEmail(String email) async {
+  Future<void> _prepareProfileForSession({
+    required String email,
+    String phone = '',
+    String userId = '',
+  }) async {
     if (!Get.isRegistered<ProfileController>()) {
       return;
     }
 
-    await Get.find<ProfileController>().updateEmail(email);
+    await Get.find<ProfileController>().seedProfileForSession(
+      email: email,
+      phone: phone,
+      userId: userId,
+    );
   }
 
   Future<void> _refreshAppData() async {
+    final refreshTasks = <Future<void>>[];
+
     if (Get.isRegistered<ProfileController>()) {
-      await Get.find<ProfileController>().refreshProfile();
+      refreshTasks.add(Get.find<ProfileController>().refreshProfile());
     }
     if (Get.isRegistered<MessageCenterController>()) {
-      await Get.find<MessageCenterController>().refreshState();
+      refreshTasks.add(Get.find<MessageCenterController>().refreshState());
     }
     if (Get.isRegistered<SettingsController>()) {
-      await Get.find<SettingsController>().refreshSettings();
+      refreshTasks.add(Get.find<SettingsController>().refreshSettings());
+    }
+    if (Get.isRegistered<CourseCatalogController>()) {
+      refreshTasks.add(Get.find<CourseCatalogController>().refreshAll());
+    }
+    if (Get.isRegistered<HomeDashboardController>()) {
+      refreshTasks.add(Get.find<HomeDashboardController>().refreshAll());
+    }
+
+    if (refreshTasks.isNotEmpty) {
+      await Future.wait<void>(refreshTasks);
     }
   }
 
   void _setBusy(bool value) {
     _isBusy = value;
     update();
+  }
+
+  void _logOtpDebug(String message) {
+    if (kDebugMode) {
+      debugPrint('OTP flow -> $message');
+    }
   }
 }

@@ -37,11 +37,35 @@ class LocalAuthSessionRepository implements AuthSessionRepository {
     await preferences.setString(_refreshTokenKey, session.refreshToken);
   }
 
-  @override
-  Future<void> sendOtp({required String phone}) async {}
+  Future<void> invalidateSession({bool preserveCredentials = true}) async {
+    if (!preserveCredentials) {
+      await saveSession(const AuthSessionRecord.empty());
+      return;
+    }
+
+    final session = await loadSession();
+    await saveSession(
+      session.copyWith(
+        isLoggedIn: false,
+        accessToken: '',
+        refreshToken: '',
+      ),
+    );
+  }
 
   @override
-  Future<void> verifyOtp({required String phone, required String code}) async {}
+  Future<void> sendOtp({String email = '', String phone = ''}) async {}
+
+  @override
+  Future<AuthSessionRecord?> verifyOtp({
+    String email = '',
+    String phone = '',
+    required String code,
+    String fallbackEmail = '',
+    String fallbackPassword = '',
+  }) async {
+    return null;
+  }
 
   @override
   Future<AuthSessionRecord> signUp({
@@ -51,7 +75,7 @@ class LocalAuthSessionRepository implements AuthSessionRepository {
     required bool termsAccepted,
   }) async {
     if (!termsAccepted) {
-      throw Exception('Terms accept karna zaroori hai.');
+      throw Exception('You must accept the terms to continue.');
     }
 
     final session = AuthSessionRecord(
@@ -75,7 +99,7 @@ class LocalAuthSessionRepository implements AuthSessionRepository {
 
     if (session.email.trim().toLowerCase() != normalizedEmail ||
         session.password != normalizedPassword) {
-      throw Exception('Email ya password match nahi kar raha.');
+      throw Exception('The email or password is incorrect.');
     }
 
     final updatedSession = session.copyWith(
@@ -94,7 +118,7 @@ class LocalAuthSessionRepository implements AuthSessionRepository {
     required String newPassword,
   }) async {
     if (session.password.trim() != currentPassword.trim()) {
-      throw Exception('Current password sahi nahi hai.');
+      throw Exception('The current password is incorrect.');
     }
 
     final updatedSession = session.copyWith(password: newPassword.trim());
@@ -108,7 +132,7 @@ class LocalAuthSessionRepository implements AuthSessionRepository {
   @override
   Future<void> resetPassword({
     required String email,
-    required String token,
+    required String code,
     required String newPassword,
   }) async {
     final session = await loadSession();

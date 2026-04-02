@@ -18,6 +18,11 @@ class RemoteSettingsRepository implements SettingsRepository {
   final LocalAuthSessionRepository _authStore;
 
   @override
+  Future<AppSettingsRecord> loadCachedSettings() {
+    return _localStore.loadSettings();
+  }
+
+  @override
   Future<AppSettingsRecord> loadSettings() async {
     final cachedSettings = await _localStore.loadSettings();
     if (!await _hasAccessToken()) {
@@ -28,6 +33,11 @@ class RemoteSettingsRepository implements SettingsRepository {
       final body = await _apiClient.getJson(ApiEndpoints.user.settings);
       final parsedSettings = _parseSettings(body, fallback: cachedSettings);
       return _localStore.saveSettings(parsedSettings);
+    } on ApiException catch (error) {
+      if (error.statusCode == 401) {
+        await _expireSession();
+      }
+      return cachedSettings;
     } catch (_) {
       return cachedSettings;
     }
@@ -40,17 +50,23 @@ class RemoteSettingsRepository implements SettingsRepository {
     }
 
     try {
-      final payload = <String, dynamic>{
-        ...settings.toMap(),
-        'data': settings.toMap(),
-      };
-      final body = await _submitSettingsUpdate(payload);
-
+      final body = await _submitSettingsUpdate(settings.toMap());
       final parsedSettings = _parseSettings(body, fallback: settings);
       return _localStore.saveSettings(parsedSettings);
+    } on ApiException catch (error) {
+      if (error.statusCode == 401) {
+        await _expireSession();
+        rethrow;
+      }
+      return _localStore.saveSettings(settings);
     } catch (_) {
       return _localStore.saveSettings(settings);
     }
+  }
+
+  @override
+  Future<void> clearCachedSettings() {
+    return _localStore.clearCachedSettings();
   }
 
   Future<dynamic> _submitSettingsUpdate(Map<String, dynamic> payload) async {
@@ -60,7 +76,7 @@ class RemoteSettingsRepository implements SettingsRepository {
         body: payload,
       );
     } on ApiException catch (error) {
-      if (error.statusCode != null) {
+      if (!_shouldRetrySettingsUpdateWithPost(error)) {
         rethrow;
       }
     }
@@ -74,9 +90,17 @@ class RemoteSettingsRepository implements SettingsRepository {
     );
   }
 
+  bool _shouldRetrySettingsUpdateWithPost(ApiException error) {
+    return error.statusCode == 404 || error.statusCode == 405;
+  }
+
   Future<bool> _hasAccessToken() async {
     final session = await _authStore.loadSession();
     return session.accessToken.trim().isNotEmpty;
+  }
+
+  Future<void> _expireSession() {
+    return _authStore.invalidateSession();
   }
 
   AppSettingsRecord _parseSettings(

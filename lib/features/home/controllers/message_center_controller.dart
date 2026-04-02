@@ -21,6 +21,10 @@ class MessageCenterController extends GetxController {
   List<MessageConversation> _conversations = <MessageConversation>[];
   List<SupportChatMessage> _aiGuestMessages = <SupportChatMessage>[];
   List<AppNotificationItem> _notifications = <AppNotificationItem>[];
+  final Map<String, List<SupportChatMessage>> _conversationMessages =
+      <String, List<SupportChatMessage>>{};
+  final Set<String> _loadingConversationIds = <String>{};
+  final Set<String> _sendingConversationIds = <String>{};
 
   List<MessageConversation> get conversations =>
       List<MessageConversation>.unmodifiable(_conversations);
@@ -33,10 +37,24 @@ class MessageCenterController extends GetxController {
   bool get hasUnreadNotifications =>
       _notifications.any((notification) => !notification.isRead);
 
+  List<SupportChatMessage> messagesForConversation(String conversationId) {
+    return List<SupportChatMessage>.unmodifiable(
+      _conversationMessages[conversationId] ?? const <SupportChatMessage>[],
+    );
+  }
+
+  bool isConversationLoading(String conversationId) {
+    return _loadingConversationIds.contains(conversationId);
+  }
+
+  bool isConversationSending(String conversationId) {
+    return _sendingConversationIds.contains(conversationId);
+  }
+
   @override
   void onInit() {
     super.onInit();
-    _loadState();
+    unawaited(_bootstrap());
     _clockTimer = Timer.periodic(const Duration(seconds: 15), (_) => update());
   }
 
@@ -56,6 +74,25 @@ class MessageCenterController extends GetxController {
         .toList();
     await _persistState();
     await _repository.markNotificationsRead();
+    update();
+  }
+
+  Future<void> markNotificationRead(String id) async {
+    var didChange = false;
+    _notifications = _notifications.map((notification) {
+      if (notification.id == id && !notification.isRead) {
+        didChange = true;
+        return notification.copyWith(isRead: true);
+      }
+      return notification;
+    }).toList();
+
+    if (!didChange) {
+      return;
+    }
+
+    await _persistState();
+    await _repository.markNotificationsRead(ids: <String>[id]);
     update();
   }
 
@@ -168,6 +205,77 @@ class MessageCenterController extends GetxController {
     }
   }
 
+  Future<void> loadConversationMessages(String conversationId) async {
+    if (conversationId == 'ai_guest' ||
+        _loadingConversationIds.contains(conversationId) ||
+        _conversationMessages.containsKey(conversationId)) {
+      return;
+    }
+
+    _loadingConversationIds.add(conversationId);
+    update();
+
+    try {
+      final messages = await _repository.loadConversationMessages(conversationId);
+      _conversationMessages[conversationId] = List<SupportChatMessage>.from(
+        messages,
+      )..sort((first, second) => first.timestamp.compareTo(second.timestamp));
+    } finally {
+      _loadingConversationIds.remove(conversationId);
+      update();
+    }
+  }
+
+  Future<void> sendConversationMessage(
+    MessageConversation conversation,
+    String text,
+  ) async {
+    final normalizedText = text.trim();
+    if (normalizedText.isEmpty || _sendingConversationIds.contains(conversation.id)) {
+      return;
+    }
+
+    final optimisticMessage = SupportChatMessage(
+      id: 'message_${_messageIdSeed++}',
+      text: normalizedText,
+      senderType: MessageSenderType.user,
+      timestamp: DateTime.now(),
+    );
+    final messages = _conversationMessages.putIfAbsent(
+      conversation.id,
+      () => <SupportChatMessage>[],
+    );
+    messages.add(optimisticMessage);
+    _updateConversationPreview(
+      conversationId: conversation.id,
+      preview: normalizedText,
+      timestamp: optimisticMessage.timestamp,
+    );
+    _sendingConversationIds.add(conversation.id);
+    update();
+
+    try {
+      final sentMessage = await _repository.sendConversationMessage(
+        conversationId: conversation.id,
+        text: normalizedText,
+      );
+      final index = messages.indexWhere((item) => item.id == optimisticMessage.id);
+      if (index >= 0) {
+        messages[index] = sentMessage;
+      } else {
+        messages.add(sentMessage);
+      }
+      _updateConversationPreview(
+        conversationId: conversation.id,
+        preview: sentMessage.text,
+        timestamp: sentMessage.timestamp,
+      );
+    } finally {
+      _sendingConversationIds.remove(conversation.id);
+      update();
+    }
+  }
+
   String conversationTimeLabel(DateTime timestamp) {
     final now = DateTime.now();
     final difference = now.difference(timestamp);
@@ -221,11 +329,12 @@ class MessageCenterController extends GetxController {
   }
 
   void _updateConversationPreview({
+    String conversationId = 'ai_guest',
     required String preview,
     required DateTime timestamp,
   }) {
     final aiGuestIndex = _conversations.indexWhere(
-      (conversation) => conversation.id == 'ai_guest',
+      (conversation) => conversation.id == conversationId,
     );
     if (aiGuestIndex == -1) {
       return;
@@ -241,17 +350,31 @@ class MessageCenterController extends GetxController {
     );
   }
 
+  Future<void> _bootstrap() async {
+    final cachedState = await _repository.loadCachedState();
+    _applyState(cachedState);
+    update();
+    await _loadState();
+  }
+
   Future<void> _loadState() async {
     final state = await _repository.loadState();
+    _applyState(state);
+    update();
+  }
+
+  void _applyState(MessageCenterState state) {
     _conversations = List<MessageConversation>.from(state.conversations)
       ..sort((first, second) => second.timestamp.compareTo(first.timestamp));
     _aiGuestMessages = List<SupportChatMessage>.from(state.aiGuestMessages)
       ..sort((first, second) => first.timestamp.compareTo(second.timestamp));
     _notifications = List<AppNotificationItem>.from(state.notifications)
       ..sort((first, second) => second.timestamp.compareTo(first.timestamp));
+    _conversationMessages['ai_guest'] = List<SupportChatMessage>.from(
+      state.aiGuestMessages,
+    );
     _notificationIdSeed = state.nextNotificationId;
     _messageIdSeed = state.nextMessageId;
-    update();
   }
 
   Future<void> _persistState() async {
@@ -268,5 +391,19 @@ class MessageCenterController extends GetxController {
 
   Future<void> refreshState() async {
     await _loadState();
+  }
+
+  Future<void> resetForSignedOutUser() async {
+    _isAiGuestTyping = false;
+    _notificationIdSeed = 1;
+    _messageIdSeed = 1;
+    _conversations = <MessageConversation>[];
+    _aiGuestMessages = <SupportChatMessage>[];
+    _notifications = <AppNotificationItem>[];
+    _conversationMessages.clear();
+    _loadingConversationIds.clear();
+    _sendingConversationIds.clear();
+    await _repository.clearCachedState();
+    update();
   }
 }

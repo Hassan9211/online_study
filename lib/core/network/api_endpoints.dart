@@ -1,10 +1,19 @@
 class ApiConfig {
   const ApiConfig._();
 
-  static const String baseUrl = String.fromEnvironment(
+  static const String _baseUrlOverride = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://192.168.2.104:8000/api',
+    defaultValue: '',
   );
+  static const String _defaultBaseUrl = 'http://192.168.2.117:8000/api';
+
+  static String get baseUrl {
+    if (_baseUrlOverride.trim().isNotEmpty) {
+      return _baseUrlOverride;
+    }
+    return _defaultBaseUrl;
+  }
+
   static const bool enableApiLogs = bool.fromEnvironment(
     'ENABLE_API_LOGS',
     defaultValue: true,
@@ -13,12 +22,76 @@ class ApiConfig {
     'USE_MOCK_PAYMENT_METHODS',
     defaultValue: false,
   );
+  static const bool useRemoteAiGuest = bool.fromEnvironment(
+    'USE_REMOTE_AI_GUEST',
+    defaultValue: false,
+  );
   static const Duration connectTimeout = Duration(seconds: 20);
   static const Duration receiveTimeout = Duration(seconds: 20);
-  static const String productDesignCourseId = String.fromEnvironment(
+  static const String _configuredProductDesignCourseId = String.fromEnvironment(
     'PRODUCT_DESIGN_COURSE_ID',
-    defaultValue: 'product_design_v1',
+    defaultValue: '1',
   );
+  static String _resolvedProductDesignCourseId = '';
+
+  static String get configuredProductDesignCourseId =>
+      _configuredProductDesignCourseId;
+
+  static String get productDesignCourseId {
+    final resolvedId = _resolvedProductDesignCourseId.trim();
+    if (resolvedId.isNotEmpty) {
+      return resolvedId;
+    }
+    return _configuredProductDesignCourseId;
+  }
+
+  static void resolveProductDesignCourse({
+    String id = '',
+    String title = '',
+  }) {
+    final normalizedId = id.trim();
+    if (normalizedId.isEmpty) {
+      return;
+    }
+
+    final normalizedTitle = _normalizeProductDesignTitle(title);
+    if (normalizedId == _configuredProductDesignCourseId) {
+      _resolvedProductDesignCourseId = normalizedId;
+      return;
+    }
+
+    if (_resolvedProductDesignCourseId == normalizedId) {
+      return;
+    }
+
+    if (_resolvedProductDesignCourseId.trim().isEmpty ||
+        normalizedTitle == 'product design v1.0' ||
+        normalizedTitle == 'product design') {
+      _resolvedProductDesignCourseId = normalizedId;
+    }
+  }
+
+  static bool matchesProductDesignCourse({
+    String id = '',
+    String title = '',
+  }) {
+    final normalizedId = id.trim();
+    if (normalizedId.isNotEmpty &&
+        (normalizedId == productDesignCourseId ||
+            normalizedId == _configuredProductDesignCourseId)) {
+      return true;
+    }
+
+    final normalizedTitle = _normalizeProductDesignTitle(title);
+    return normalizedTitle == 'product design v1.0' ||
+        normalizedTitle == 'product-design-v1' ||
+        normalizedTitle == 'product_design_v1' ||
+        normalizedTitle == 'product design';
+  }
+
+  static String _normalizeProductDesignTitle(String value) {
+    return value.trim().toLowerCase();
+  }
 }
 
 class ApiEndpoints {
@@ -30,12 +103,9 @@ class ApiEndpoints {
   static const FavouriteEndpoints favourites = FavouriteEndpoints._();
   static const CourseEndpoints courses = CourseEndpoints._();
   static const PaymentEndpoints payments = PaymentEndpoints._();
-  static const NotificationEndpoints notifications =
-      NotificationEndpoints._();
+  static const NotificationEndpoints notifications = NotificationEndpoints._();
   static const MessageEndpoints messages = MessageEndpoints._();
   static const SupportEndpoints support = SupportEndpoints._();
-  static const WebRouteEndpoints web = WebRouteEndpoints._();
-  static const AppPageEndpoints app = AppPageEndpoints._();
 }
 
 class OnboardingEndpoints {
@@ -56,6 +126,8 @@ class AuthEndpoints {
   final String changePassword = '/auth/change-password';
   final String forgotPassword = '/auth/forgot-password';
   final String resetPassword = '/auth/reset-password';
+  final String forgotPasswordCompat = '/password/forgot';
+  final String resetPasswordCompat = '/password/reset';
 
   String providerRedirect(String provider) => '/auth/$provider/redirect';
   String providerCallback(String provider) => '/auth/$provider/callback';
@@ -131,32 +203,4 @@ class SupportEndpoints {
   const SupportEndpoints._();
 
   final String tickets = '/support/tickets';
-}
-
-class WebRouteEndpoints {
-  const WebRouteEndpoints._();
-
-  final String root = '/';
-  final String login = '/login';
-  final String signUp = '/signup';
-  final String forgot = '/forgot';
-  final String otp = '/otp';
-
-  String social(String provider) => '/social/$provider';
-  String socialCallback(String provider) => '/social/$provider/callback';
-}
-
-class AppPageEndpoints {
-  const AppPageEndpoints._();
-
-  final String dashboard = '/app/dashboard';
-  final String courses = '/app/courses';
-  final String myCourses = '/app/me/courses';
-  final String favorites = '/app/favorites';
-  final String notifications = '/app/notifications';
-  final String messages = '/app/messages';
-  final String account = '/app/account';
-
-  String courseDetail(String courseId) => '/app/courses/$courseId';
-  String checkout(String courseId) => '/app/checkout/$courseId';
 }
